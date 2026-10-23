@@ -117,6 +117,9 @@ final class ScheduleStore: ObservableObject {
     private var parentVerifiedFlags: [String: SyncTimestampedFlag] = [:]
     private var parentVerifiedSubTaskFlags: [String: SyncTimestampedFlag] = [:]
 
+    // 저장된 여러 속성을 복원하는 동안 didSet이 아직 읽지 않은 내역을 덮어쓰지 않도록 합니다.
+    private var isRestoringLocalState = true
+
     private let itemsStorageKey = "weekly_schedule_items_v1"
     private let weeklyOverridesStorageKey = "weekly_schedule_overrides_v1"
     private let completedItemsStorageKey = "weekly_schedule_completed_items_v1"
@@ -168,6 +171,7 @@ final class ScheduleStore: ObservableObject {
         loadSyncFlags()
         reconcileFlagsWithSets()
         normalizeAndDeduplicateLocalItems()
+        isRestoringLocalState = false
 
         let currentDate = Date()
         now = currentDate
@@ -2125,6 +2129,7 @@ final class ScheduleStore: ObservableObject {
     }
 
     private func saveCompletions() {
+        guard !isRestoringLocalState else { return }
         if let encoded = try? JSONEncoder().encode(completedItemKeys) {
             UserDefaults.standard.set(encoded, forKey: completedItemsStorageKey)
         }
@@ -2145,6 +2150,7 @@ final class ScheduleStore: ObservableObject {
     }
 
     private func saveParentVerifications() {
+        guard !isRestoringLocalState else { return }
         if let encoded = try? JSONEncoder().encode(parentVerifiedItemKeys) {
             UserDefaults.standard.set(encoded, forKey: parentVerifiedItemsStorageKey)
         }
@@ -2189,6 +2195,7 @@ final class ScheduleStore: ObservableObject {
     }
 
     private func saveReactionsAndPraises() {
+        guard !isRestoringLocalState else { return }
         if let encoded = try? JSONEncoder().encode(itemReactions) {
             UserDefaults.standard.set(encoded, forKey: reactionsStorageKey)
         }
