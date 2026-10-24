@@ -184,7 +184,7 @@ final class ScheduleStore: ObservableObject {
         Task {
             await NotificationManager.shared.updateDeviceRole(deviceRole)
             if deviceRole == .child {
-                await NotificationManager.shared.syncAllNotifications(for: effectiveItems)
+                await syncNotificationsAsync()
             } else {
                 await NotificationManager.shared.disableAllNotificationsForParent()
             }
@@ -279,7 +279,7 @@ final class ScheduleStore: ObservableObject {
         Task {
             await NotificationManager.shared.updateDeviceRole(role)
             if role == .child {
-                await NotificationManager.shared.syncAllNotifications(for: effectiveItems)
+                await NotificationManager.shared.syncAllNotifications(for: masterItems)
                 showToast("👦 아이 폰 모드로 전환되었습니다. 시간표 알람이 활성화됩니다.")
             } else {
                 await NotificationManager.shared.disableAllNotificationsForParent()
@@ -1430,16 +1430,18 @@ final class ScheduleStore: ObservableObject {
         scheduleCloudPush()
     }
 
-    func syncNotifications() {
+    func syncNotificationsAsync() async {
         guard deviceRole == .child else {
-            Task {
-                await NotificationManager.shared.disableAllNotificationsForParent()
-            }
+            await NotificationManager.shared.disableAllNotificationsForParent()
             return
         }
-        let snapshot = effectiveItems
-        Task {
-            await NotificationManager.shared.syncAllNotifications(for: snapshot)
+        // 매주 반복 알람은 정규 시간표만 등록합니다. 이번 주 휴강·시간 이동을 반복 알람으로 넣으면 다음 주까지 그 예외가 남습니다.
+        await NotificationManager.shared.syncAllNotifications(for: masterItems)
+    }
+
+    func syncNotifications() {
+        Task { @MainActor in
+            await syncNotificationsAsync()
         }
     }
 
@@ -1515,7 +1517,7 @@ final class ScheduleStore: ObservableObject {
             let prevItems = self.items
             let prevOverrides = self.weeklyOverrides
 
-            applyMergedRemoteSnapshot(remoteSnapshot)
+            await applyMergedRemoteSnapshot(remoteSnapshot)
             lastSyncedBlobPathname = latestBlob.pathname
             lastSyncedAt = Date()
             lastRemoteUpdatedBy = remoteSnapshot.updatedByRole
@@ -1583,7 +1585,7 @@ final class ScheduleStore: ObservableObject {
                     from: latestBlob.url,
                     token: vercelBlobToken
                 ) {
-                    applyMergedRemoteSnapshot(remoteSnapshot)
+                    await applyMergedRemoteSnapshot(remoteSnapshot)
                 }
             }
 
@@ -1631,7 +1633,7 @@ final class ScheduleStore: ObservableObject {
     }
 
     /// 원격 스냅샷과 로컬 데이터를 타임스탬프 기준으로 유실 없이 스마트 병합
-    private func applyMergedRemoteSnapshot(_ remote: CloudSyncSnapshot) {
+    private func applyMergedRemoteSnapshot(_ remote: CloudSyncSnapshot) async {
         // 0. 아이 완료 체크 & 부모 확인 플래그 및 하트 리액션 먼저 병합 (아이템 정규화 시 함께 마이그레이션되도록)
         self.completionFlags = Self.mergeFlagDict(local: self.completionFlags, remote: remote.completionFlags)
         self.subTaskCompletionFlags = Self.mergeFlagDict(local: self.subTaskCompletionFlags, remote: remote.subTaskCompletionFlags)
@@ -1724,9 +1726,9 @@ final class ScheduleStore: ObservableObject {
 
         if mergedItems != self.items {
             self.items = mergedItems
-            syncNotifications()
+            await syncNotificationsAsync()
         } else if overridesChanged {
-            syncNotifications()
+            await syncNotificationsAsync()
         }
 
         // 4. 플래그 딕셔너리 -> Set 반영
@@ -1831,11 +1833,8 @@ final class ScheduleStore: ObservableObject {
                         item.endHour = 22
                         item.endMinute = 30
                     }
-                    // 수정되지 않은 초기 기본 일정이면 기준 시각(baselineTimestamp)으로 맞춰 다른 기기의 수정/삭제가 우선되도록 함
-                    let isUnmodified = item.endHour == canonical.endHour &&
-                        item.endMinute == canonical.endMinute &&
-                        item.note == canonical.note &&
-                        item.subTasks.map(\.title) == canonical.subTasks.map(\.title)
+                    // 수정되지 않은 초기 기본 일정이면 기준 시각(baselineTimestamp)으로 맞춰 다른 기기의 수정/삭제가 우선되도록 함 (알림 활성화 및 사전 시간 설정 포함)
+                    let isUnmodified = canonical.hasSameScheduleContent(as: item)
                     if isUnmodified {
                         item.updatedAt = DefaultScheduleData.baselineTimestamp
                     }

@@ -19,7 +19,7 @@ struct NotificationSettingsView: View {
     @State private var showingPrintSheet: Bool = false
 
     private var filteredItems: [ScheduleItem] {
-        var result = store.effectiveItems
+        var result = store.masterItems
         if let day = selectedFilterDay {
             result = result.filter { $0.weekday == day }
         }
@@ -428,7 +428,7 @@ struct NotificationSettingsView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(statusTitle)
                                 .font(.subheadline.weight(.bold))
-                            Text("시계 알람 \(notificationManager.scheduledCount)개 예약됨 (알림 켜진 일정 \(store.effectiveItems.filter { $0.isNotificationEnabled }.count)개)")
+                            Text("시계 알람 \(notificationManager.scheduledCount)개 예약됨 (정규 시간표 중 알림 켜진 일정 \(store.masterItems.filter { $0.isNotificationEnabled }.count)개)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -439,7 +439,7 @@ struct NotificationSettingsView: View {
                             Button("권한 허용") {
                                 Task {
                                     _ = await notificationManager.requestPermission()
-                                    await notificationManager.syncAllNotifications(for: store.effectiveItems)
+                                    await notificationManager.syncAllNotifications(for: store.masterItems)
                                 }
                             }
                             .font(.caption.weight(.bold))
@@ -484,7 +484,7 @@ struct NotificationSettingsView: View {
                                 Button {
                                     notificationManager.selectedSoundStyle = style
                                     Task {
-                                        await notificationManager.syncAllNotifications(for: store.effectiveItems)
+                                        await notificationManager.syncAllNotifications(for: store.masterItems)
                                     }
                                 } label: {
                                     HStack(spacing: 10) {
@@ -511,7 +511,7 @@ struct NotificationSettingsView: View {
                                     notificationManager.togglePreviewSound(style: style)
                                     if !wasSelected {
                                         Task {
-                                            await notificationManager.syncAllNotifications(for: store.effectiveItems)
+                                            await notificationManager.syncAllNotifications(for: store.masterItems)
                                         }
                                     }
                                 } label: {
@@ -536,28 +536,6 @@ struct NotificationSettingsView: View {
                         }
                     }
                     .padding(.vertical, 4)
-
-                    // 잠금 화면 연속 벨 옵션 (정각 알람 + 30초 뒤 후속 벨로 약 1분간 연속 울림)
-                    Toggle(
-                        isOn: Binding(
-                            get: { notificationManager.isCascadeRepeatEnabled },
-                            set: { newValue in
-                                notificationManager.isCascadeRepeatEnabled = newValue
-                                Task {
-                                    await notificationManager.syncAllNotifications(for: store.effectiveItems)
-                                }
-                            }
-                        )
-                    ) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("잠금 화면 2회 연속 벨 울림 (최대 1분)")
-                                .font(.subheadline.weight(.semibold))
-                            Text("정각 알람을 놓치지 않도록 27초 벨이 끝난 직후 한 번 더 연속으로 울립니다.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .tint(.orange)
 
                     // 다시 알림(Snooze) 대기 중인 항목이 있으면 표시
                     if !notificationManager.snoozedAlarms.isEmpty {

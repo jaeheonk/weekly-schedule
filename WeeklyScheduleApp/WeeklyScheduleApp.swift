@@ -5,6 +5,8 @@ struct WeeklyScheduleApp: App {
     @StateObject private var store: ScheduleStore
 
     init() {
+        // iOS 로컬 알림 델리게이트는 앱 초기화 시점에 즉시 등록되어야 함
+        _ = NotificationManager.shared
         let newStore = ScheduleStore()
         _store = StateObject(wrappedValue: newStore)
         BackgroundRefreshManager.shared.register()

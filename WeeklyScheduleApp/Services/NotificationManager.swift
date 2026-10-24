@@ -162,15 +162,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         }
     }
 
-    /// 잠금 화면에서도 1분 이상 길게 울리도록 정각 알람에 후속 연속 벨(+30초)을 추가할지 여부
-    @Published var isCascadeRepeatEnabled: Bool = true {
-        didSet {
-            UserDefaults.standard.set(isCascadeRepeatEnabled, forKey: cascadeRepeatStorageKey)
-        }
-    }
-
     private let soundStyleStorageKey = "weekly_schedule_alarm_sound_style_v1"
-    private let cascadeRepeatStorageKey = "weekly_schedule_alarm_cascade_repeat_v1"
     private let snoozedAlarmsStorageKey = "weekly_schedule_snoozed_alarms_v1"
 
     private var vibrationTimer: Timer?
@@ -186,9 +178,6 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         if let savedStyle = UserDefaults.standard.string(forKey: soundStyleStorageKey),
            let style = AlarmSoundStyle(rawValue: savedStyle) {
             self.selectedSoundStyle = style
-        }
-        if UserDefaults.standard.object(forKey: cascadeRepeatStorageKey) != nil {
-            self.isCascadeRepeatEnabled = UserDefaults.standard.bool(forKey: cascadeRepeatStorageKey)
         }
         loadSnoozedAlarms()
 
@@ -244,6 +233,9 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
                 options: [.alert, .sound, .badge]
             )
             await refreshAuthorizationStatus()
+            if granted && !cachedScheduleItems.isEmpty && !isParentDevice {
+                await syncAllNotifications(for: cachedScheduleItems)
+            }
             return granted
         } catch {
             await refreshAuthorizationStatus()
@@ -258,6 +250,10 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         self.isParentDevice = (role == .parent)
         if role == .parent {
             await disableAllNotificationsForParent()
+        } else {
+            if !cachedScheduleItems.isEmpty {
+                await syncAllNotifications(for: cachedScheduleItems)
+            }
         }
     }
 
@@ -320,88 +316,123 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
         let alarmSound = UNNotificationSound(named: UNNotificationSoundName(selectedSoundStyle.fileName))
         var count = snoozedAlarms.count
-        var zeroLeadCandidatesForCascade: [(ScheduleItem, Int, Int, Int)] = []
+        let maxSlots = 60 // iOS 64개 제한 보호 (Snooze 및 즉시 알림 여유 슬롯 유지)
+
+        let now = Date()
+        let calendar = Calendar(identifier: .gregorian)
+        let curW = calendar.component(.weekday, from: now)
+        let curH = calendar.component(.hour, from: now)
+        let curM = calendar.component(.minute, from: now)
+        let nowTotalMinutes = curH * 60 + curM
+
+        // 현재 시각으로부터 해당 알람 발생 시점까지의 주간 분(minute) 차이 계산 (가장 가까운 알람 우선순위 정렬용)
+        func minutesUntil(calWeekday: Int, hour: Int, minute: Int) -> Int {
+            var dayDiff = (calWeekday - curW + 7) % 7
+            let targetMins = hour * 60 + minute
+            if dayDiff == 0 && targetMins < nowTotalMinutes {
+                dayDiff = 7
+            }
+            return dayDiff * 1440 + (targetMins - nowTotalMinutes)
+        }
+
+        struct ScheduledAlarmCandidate {
+            let item: ScheduleItem
+            let leadMinutes: Int
+            let calWeekday: Int
+            let hour: Int
+            let minute: Int
+            let minutesUntilTrigger: Int
+        }
+
+        var primaryCandidates: [ScheduledAlarmCandidate] = []
+        var leadCandidates: [ScheduledAlarmCandidate] = []
 
         for item in enabledItems {
             let offsets = item.notificationLeadMinutes.isEmpty ? [0] : item.notificationLeadMinutes
             for lead in offsets {
-                // iOS 로컬 알림 최대 64개 제한 보호
-                guard count < 60 else { break }
-
                 let (calWeekday, triggerHour, triggerMinute) = Self.computeTriggerTime(
                     weekday: item.weekday,
                     hour: item.startHour,
                     minute: item.startMinute,
                     leadMinutes: lead
                 )
-
-                let content = makeAlarmNotificationContent(
-                    for: item,
+                let minsUntil = minutesUntil(calWeekday: calWeekday, hour: triggerHour, minute: triggerMinute)
+                let candidate = ScheduledAlarmCandidate(
+                    item: item,
                     leadMinutes: lead,
-                    sound: alarmSound,
-                    isCascadeFollowUp: false
+                    calWeekday: calWeekday,
+                    hour: triggerHour,
+                    minute: triggerMinute,
+                    minutesUntilTrigger: minsUntil
                 )
 
-                var dateComponents = DateComponents()
-                dateComponents.weekday = calWeekday
-                dateComponents.hour = triggerHour
-                dateComponents.minute = triggerMinute
-                dateComponents.second = 0
-
-                let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
-                let identifier = "schedule_\(item.id.uuidString)_lead_\(lead)"
-                let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
-
-                do {
-                    try await center.add(request)
-                    count += 1
-                    if lead == 0 {
-                        zeroLeadCandidatesForCascade.append((item, calWeekday, triggerHour, triggerMinute))
-                    }
-                } catch {
-                    print("Failed to schedule alarm notification: \(error)")
+                if lead == 0 {
+                    primaryCandidates.append(candidate)
+                } else {
+                    leadCandidates.append(candidate)
                 }
             }
         }
 
-        // 연속 알람(Cascade Repeat)이 켜져 있으면 남은 슬롯 한도 내에서 정각 알람 30초 뒤에 2차 연속 벨을 등록하여
-        // 잠금 화면에서도 약 1분(27초 + 27초) 동안 시계 알람처럼 계속 울리도록 설정
-        if isCascadeRepeatEnabled {
-            let todayWeekday = Weekday.from(date: Date())
-            // 오늘 요일 일정을 최우선으로 배치
-            let sortedCandidates = zeroLeadCandidatesForCascade.sorted { lhs, rhs in
-                let lhsIsToday = lhs.0.weekday == todayWeekday
-                let rhsIsToday = rhs.0.weekday == todayWeekday
-                if lhsIsToday != rhsIsToday { return lhsIsToday }
-                return lhs.0.startTotalMinutes < rhs.0.startTotalMinutes
+        // 1단계: 모든 정각(lead == 0) 알람을 시간순으로 최우선 등록 (특정 요일 누락/기아 현상 원천 차단)
+        primaryCandidates.sort { $0.minutesUntilTrigger < $1.minutesUntilTrigger }
+        for cand in primaryCandidates {
+            guard count < maxSlots else { break }
+
+            let content = makeAlarmNotificationContent(
+                for: cand.item,
+                leadMinutes: cand.leadMinutes,
+                sound: alarmSound
+            )
+
+            var dateComponents = DateComponents()
+            dateComponents.calendar = calendar
+            dateComponents.timeZone = TimeZone.current
+            dateComponents.weekday = cand.calWeekday
+            dateComponents.hour = cand.hour
+            dateComponents.minute = cand.minute
+            dateComponents.second = 0
+
+            let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
+            let identifier = "schedule_\(cand.item.id.uuidString)_lead_\(cand.leadMinutes)"
+            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+
+            do {
+                try await center.add(request)
+                count += 1
+            } catch {
+                print("Failed to schedule primary alarm notification: \(error)")
             }
+        }
 
-            for (item, calWeekday, triggerHour, triggerMinute) in sortedCandidates {
-                guard count < 61 else { break }
+        // 2단계: 남은 슬롯에 오늘/가장 가까운 요일부터 사전 준비 알림(lead > 0) 순차 등록
+        leadCandidates.sort { $0.minutesUntilTrigger < $1.minutesUntilTrigger }
+        for cand in leadCandidates {
+            guard count < maxSlots else { break }
 
-                let content = makeAlarmNotificationContent(
-                    for: item,
-                    leadMinutes: 0,
-                    sound: alarmSound,
-                    isCascadeFollowUp: true
-                )
+            let content = makeAlarmNotificationContent(
+                for: cand.item,
+                leadMinutes: cand.leadMinutes,
+                sound: alarmSound
+            )
 
-                var dateComponents = DateComponents()
-                dateComponents.weekday = calWeekday
-                dateComponents.hour = triggerHour
-                dateComponents.minute = triggerMinute
-                dateComponents.second = 30
+            var dateComponents = DateComponents()
+            dateComponents.calendar = calendar
+            dateComponents.timeZone = TimeZone.current
+            dateComponents.weekday = cand.calWeekday
+            dateComponents.hour = cand.hour
+            dateComponents.minute = cand.minute
+            dateComponents.second = 0
 
-                let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
-                let identifier = "schedule_\(item.id.uuidString)_lead_0_cascade"
-                let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
+            let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
+            let identifier = "schedule_\(cand.item.id.uuidString)_lead_\(cand.leadMinutes)"
+            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: trigger)
 
-                do {
-                    try await center.add(request)
-                    count += 1
-                } catch {
-                    print("Failed to schedule cascade alarm: \(error)")
-                }
+            do {
+                try await center.add(request)
+                count += 1
+            } catch {
+                print("Failed to schedule lead alarm notification: \(error)")
             }
         }
 
@@ -412,14 +443,11 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     private func makeAlarmNotificationContent(
         for item: ScheduleItem,
         leadMinutes: Int,
-        sound: UNNotificationSound,
-        isCascadeFollowUp: Bool
+        sound: UNNotificationSound
     ) -> UNMutableNotificationContent {
         let content = UNMutableNotificationContent()
         if leadMinutes == 0 {
-            content.title = isCascadeFollowUp
-                ? "🚨 [알람 계속 울림] \(item.title) 시작 시간!"
-                : "⏰ [시계 알람] \(item.title) 시작 시간이에요!"
+            content.title = "⏰ [시계 알람] \(item.title) 시작 시간이에요!"
             content.subtitle = "\(item.weekday.fullName) \(item.timeRangeString)"
             if !item.note.isEmpty {
                 content.body = "\(item.note) · 길게 눌러 '다시 알림' 또는 '알람 끄기'를 선택하세요."
@@ -438,7 +466,6 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
         content.sound = sound
         content.categoryIdentifier = Self.alarmCategoryIdentifier
-        content.interruptionLevel = .timeSensitive
         content.relevanceScore = 1.0
         content.userInfo = [
             "isScheduleAlarm": true,
@@ -485,15 +512,17 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             return
         }
 
-        // 2. 주간 시간표 예약 시간 도달 여부 확인 (초 단위가 0~4초 사이일 때 트리거)
+        // 2. 주간 시간표 예약 시간 도달 여부 확인 (초 단위 제약 없이 해당 분 내 미트리거 시 즉시 실행)
         let calendar = Calendar.current
-        let second = calendar.component(.second, from: now)
-        guard second < 5 else { return }
-
         let currentCalWeekday = calendar.component(.weekday, from: now)
         let currentHour = calendar.component(.hour, from: now)
         let currentMinute = calendar.component(.minute, from: now)
         let dayOrdinal = calendar.ordinality(of: .day, in: .year, for: now) ?? 0
+
+        // 하루가 바뀌면 오래된 분 트리거 키 정리하여 메모리 누수 방지
+        if triggeredMinuteKeys.count > 120 {
+            triggeredMinuteKeys = triggeredMinuteKeys.filter { $0.hasPrefix("\(dayOrdinal)_") }
+        }
 
         for item in items where item.isNotificationEnabled {
             let offsets = item.notificationLeadMinutes.isEmpty ? [0] : item.notificationLeadMinutes
@@ -580,21 +609,13 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         startContinuousAlarmAudioAndVibration()
     }
 
-    /// 알람 끄기 (소리 및 진동 즉시 정지 + 잠금 화면 후속 연속 알람 취소)
+    /// 알람 끄기 (소리 및 진동 즉시 정지)
     func stopActiveAlarm() {
-        let currentSession = activeAlarm
         stopContinuousAlarmAudioAndVibration()
         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
             self.activeAlarm = nil
         }
-
-        // 전달된 알림 배너 및 같은 일정의 직후 연속(cascade) 알림 정리
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
-        if let itemId = currentSession?.scheduleItemId {
-            UNUserNotificationCenter.current().removePendingNotificationRequests(
-                withIdentifiers: ["snooze_cascade_\(itemId.uuidString)"]
-            )
-        }
     }
 
     /// 다시 알림 (Snooze) 예약 (예: 5분 뒤 또는 9분 뒤 다시 울림)
@@ -637,7 +658,6 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             : "\(session.note) · 지금 바로 시작해 볼까요?"
         content.sound = UNNotificationSound(named: UNNotificationSoundName(selectedSoundStyle.fileName))
         content.categoryIdentifier = Self.alarmCategoryIdentifier
-        content.interruptionLevel = .timeSensitive
         content.relevanceScore = 1.0
         content.userInfo = [
             "isScheduleAlarm": true,
@@ -655,20 +675,6 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: TimeInterval(minutes * 60), repeats: false)
         let request = UNNotificationRequest(identifier: snoozeId, content: content, trigger: trigger)
         try? await center.add(request)
-
-        // 잠금 화면에서도 길게 울리도록 30초 뒤 후속 벨 추가
-        if isCascadeRepeatEnabled {
-            let cascadeTrigger = UNTimeIntervalNotificationTrigger(
-                timeInterval: TimeInterval(minutes * 60 + 30),
-                repeats: false
-            )
-            let cascadeRequest = UNNotificationRequest(
-                identifier: "\(snoozeId)_cascade",
-                content: content,
-                trigger: cascadeTrigger
-            )
-            try? await center.add(cascadeRequest)
-        }
 
         await refreshAuthorizationStatus()
     }
@@ -712,7 +718,6 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         content.body = "잠금 화면에서는 27초 동안 알람 벨이 계속 울리며, 길게 누르면 '5분 뒤 다시 알림' 또는 '알람 끄기'를 누를 수 있어요!"
         content.sound = UNNotificationSound(named: UNNotificationSoundName(selectedSoundStyle.fileName))
         content.categoryIdentifier = Self.alarmCategoryIdentifier
-        content.interruptionLevel = .timeSensitive
         content.relevanceScore = 1.0
         content.userInfo = [
             "isScheduleAlarm": true,
@@ -753,7 +758,6 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         content.title = title
         content.body = body
         content.sound = .default
-        content.interruptionLevel = .timeSensitive
 
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 0.5, repeats: false)
         let request = UNNotificationRequest(identifier: "sync_event_\(UUID().uuidString)", content: content, trigger: trigger)
@@ -842,7 +846,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     // MARK: - 시간 계산 헬퍼
 
-    private static func computeTriggerTime(weekday: Weekday, hour: Int, minute: Int, leadMinutes: Int) -> (Int, Int, Int) {
+    static func computeTriggerTime(weekday: Weekday, hour: Int, minute: Int, leadMinutes: Int) -> (calWeekday: Int, hour: Int, minute: Int) {
         var totalMinutes = hour * 60 + minute - leadMinutes
         var calWeekday = weekday.calendarWeekday
 
