@@ -116,10 +116,7 @@ final class ScheduleWidgetDataManager: @unchecked Sendable {
     // MARK: - ISO-8601 주차 키 (`ScheduleStore.currentWeekPrefix`와 동일)
 
     static func weekKey(for date: Date = Date()) -> String {
-        let cal = Calendar(identifier: .iso8601)
-        let year = cal.component(.yearForWeekOfYear, from: date)
-        let week = cal.component(.weekOfYear, from: date)
-        return "\(year)-W\(week)"
+        ScheduleCalendarUtils.weekKey(for: date)
     }
 
     // MARK: - 위젯 타임라인 리로드
@@ -446,6 +443,11 @@ final class ScheduleWidgetDataManager: @unchecked Sendable {
             } else if let cached = loadCachedRemoteSnapshot() {
                 baseSnapshot = cached
             } else {
+                // 원격에 이미 최신 스냅샷이 존재하지만 네트워크 오류 등으로 다운로드/캐시 로드에 실패한 경우,
+                // 스타 원장(starTransactions) 및 보상 이력(starRedemptionRequests)이 빈 배열로 덮어쓰여지는 유실을 차단하기 위해 업로드를 건너뜁니다.
+                if latest != nil {
+                    return
+                }
                 baseSnapshot = CloudSyncSnapshot(
                     schemaVersion: 5,
                     familyCode: familyCode,
@@ -673,6 +675,10 @@ final class ScheduleWidgetDataManager: @unchecked Sendable {
         if let jsonStr = String(data: encoded, encoding: .utf8) {
             KeychainHelper.saveString(jsonStr, forKey: pendingCompletionsKey)
         }
+    }
+
+    func cacheRemoteSnapshot(_ snapshot: CloudSyncSnapshot) {
+        saveCachedRemoteSnapshot(snapshot)
     }
 
     private func saveCachedRemoteSnapshot(_ snapshot: CloudSyncSnapshot) {

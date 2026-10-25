@@ -67,7 +67,7 @@ final class VercelBlobSyncService {
         }
         components.queryItems = [
             URLQueryItem(name: "prefix", value: prefix),
-            URLQueryItem(name: "limit", value: "50")
+            URLQueryItem(name: "limit", value: "100")
         ]
         guard let url = components.url else { throw VercelBlobSyncError.invalidURL }
 

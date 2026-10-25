@@ -64,6 +64,22 @@ enum Weekday: Int, CaseIterable, Codable, Identifiable {
     static let weekdaysOnly: [Weekday] = [.monday, .tuesday, .wednesday, .thursday, .friday]
 }
 
+// MARK: - ISO-8601 Calendar & WeekKey Utilities
+public enum ScheduleCalendarUtils {
+    public static var iso8601Calendar: Calendar = {
+        var cal = Calendar(identifier: .iso8601)
+        cal.timeZone = TimeZone(identifier: "Asia/Seoul") ?? .current
+        return cal
+    }()
+
+    public static func weekKey(for date: Date = Date()) -> String {
+        let cal = iso8601Calendar
+        let year = cal.component(.yearForWeekOfYear, from: date)
+        let week = cal.component(.weekOfYear, from: date)
+        return "\(year)-W\(week)"
+    }
+}
+
 // MARK: - ScheduleCategory
 enum ScheduleCategory: String, CaseIterable, Codable, Identifiable {
     case study = "study"           // 공부/숙제
@@ -963,6 +979,15 @@ struct CloudSyncSnapshot: Codable, Equatable {
     var starRewardPresets: [StarRewardPreset]
     var deletedStarPresetTimestamps: [String: TimeInterval]
 
+    /// 취소/원복된 스타 트랜잭션 ID 목록 (기기 로컬 원장에서도 영구 제거용)
+    var revokedStarTransactionIds: [String] = []
+
+    /// 취소/원복된 스타 보상 교환 신청 ID 목록
+    var revokedStarRedemptionIds: [String] = []
+
+    /// 취소/원복된 칭찬/응원 노트 ID 목록 (스타 환전 하트 원복용)
+    var revokedPraiseNoteIds: [String] = []
+
     enum CodingKeys: String, CodingKey {
         case schemaVersion, familyCode, updatedAt, updatedByRole, updatedByDeviceId
         case parentPinCode, parentPinUpdatedAt
@@ -971,6 +996,7 @@ struct CloudSyncSnapshot: Codable, Equatable {
         case itemReactions, praiseNotes
         case rewardRedemptions, archivedEarnedHearts, rewardPresets, deletedRewardPresetTimestamps
         case starTransactions, starRedemptionRequests, starRewardPresets, deletedStarPresetTimestamps
+        case revokedStarTransactionIds, revokedStarRedemptionIds, revokedPraiseNoteIds
     }
 
     init(
@@ -997,7 +1023,10 @@ struct CloudSyncSnapshot: Codable, Equatable {
         starTransactions: [StarTransaction] = [],
         starRedemptionRequests: [StarRedemptionRequest] = [],
         starRewardPresets: [StarRewardPreset] = StarRewardPreset.defaultPresets,
-        deletedStarPresetTimestamps: [String: TimeInterval] = [:]
+        deletedStarPresetTimestamps: [String: TimeInterval] = [:],
+        revokedStarTransactionIds: [String] = [],
+        revokedStarRedemptionIds: [String] = [],
+        revokedPraiseNoteIds: [String] = []
     ) {
         self.schemaVersion = schemaVersion
         self.familyCode = familyCode
@@ -1023,6 +1052,9 @@ struct CloudSyncSnapshot: Codable, Equatable {
         self.starRedemptionRequests = starRedemptionRequests
         self.starRewardPresets = starRewardPresets
         self.deletedStarPresetTimestamps = deletedStarPresetTimestamps
+        self.revokedStarTransactionIds = revokedStarTransactionIds
+        self.revokedStarRedemptionIds = revokedStarRedemptionIds
+        self.revokedPraiseNoteIds = revokedPraiseNoteIds
     }
 
     init(from decoder: Decoder) throws {
@@ -1052,5 +1084,8 @@ struct CloudSyncSnapshot: Codable, Equatable {
         starRedemptionRequests = try container.decodeIfPresent([StarRedemptionRequest].self, forKey: .starRedemptionRequests) ?? []
         starRewardPresets = try container.decodeIfPresent([StarRewardPreset].self, forKey: .starRewardPresets) ?? StarRewardPreset.defaultPresets
         deletedStarPresetTimestamps = try container.decodeIfPresent([String: TimeInterval].self, forKey: .deletedStarPresetTimestamps) ?? [:]
+        revokedStarTransactionIds = try container.decodeIfPresent([String].self, forKey: .revokedStarTransactionIds) ?? []
+        revokedStarRedemptionIds = try container.decodeIfPresent([String].self, forKey: .revokedStarRedemptionIds) ?? []
+        revokedPraiseNoteIds = try container.decodeIfPresent([String].self, forKey: .revokedPraiseNoteIds) ?? []
     }
 }

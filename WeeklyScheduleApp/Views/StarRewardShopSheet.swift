@@ -766,6 +766,12 @@ struct StarRewardShopSheet: View {
                 AddStarRewardPresetSheet()
                     .environmentObject(store)
             }
+            .task {
+                await store.syncNow(forceUploadIfEmpty: false)
+            }
+            .refreshable {
+                await store.syncNow(forceUploadIfEmpty: false)
+            }
         }
         #if os(iOS)
         .dynamicTypeSize(.large)

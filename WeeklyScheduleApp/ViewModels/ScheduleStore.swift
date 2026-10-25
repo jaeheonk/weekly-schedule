@@ -167,6 +167,12 @@ final class ScheduleStore: ObservableObject {
     private let starRedemptionsStorageKey = "weekly_schedule_star_redemptions_v1"
     private let starRewardPresetsStorageKey = "weekly_schedule_star_reward_presets_v1"
     private let deletedStarPresetsStorageKey = "weekly_schedule_deleted_star_presets_v1"
+    private var revokedStarTransactionIds: [String] = []
+    private var revokedStarRedemptionIds: [String] = []
+    private var revokedPraiseNoteIds: [String] = []
+    private let revokedStarTransactionsStorageKey = "weekly_schedule_revoked_star_transactions_v1"
+    private let revokedStarRedemptionsStorageKey = "weekly_schedule_revoked_star_redemptions_v1"
+    private let revokedPraiseNotesStorageKey = "weekly_schedule_revoked_praise_notes_v1"
     private let syncFlagsStorageKey = "weekly_schedule_sync_flags_v1"
     private let vercelTokenStorageKey = "weekly_schedule_vercel_blob_token_v1"
     private let familyCodeStorageKey = "weekly_schedule_family_code_v1"
@@ -614,10 +620,7 @@ final class ScheduleStore: ObservableObject {
     // MARK: - 2-Step Completion Tracking (아이 체크 + 부모님 최종 확인)
 
     var currentWeekPrefix: String {
-        let cal = Calendar(identifier: .iso8601)
-        let year = cal.component(.yearForWeekOfYear, from: now)
-        let week = cal.component(.weekOfYear, from: now)
-        return "\(year)-W\(week)"
+        ScheduleCalendarUtils.weekKey(for: now)
     }
 
     func itemKey(for itemId: UUID, weekKey: String? = nil) -> String {
@@ -1268,7 +1271,10 @@ final class ScheduleStore: ObservableObject {
         let earnTxId = StarTransaction.dailyEarnId(weekKey: wk, weekday: weekday)
 
         // 2. 이미 원장(Ledger)에 해당 주차·요일의 일일 스타 지급 기록이 있으면 `.awarded` (옵션 A: 영구 보존)
-        if let existingTx = starTransactions.first(where: { $0.id == earnTxId }) {
+        if let existingTx = starTransactions.first(where: {
+            $0.id == earnTxId ||
+            ($0.kind == .dailyAllClear && $0.weekKey == wk && $0.weekdayRawValue == weekday.rawValue)
+        }) {
             return .awarded(transaction: existingTx)
         }
 
@@ -1313,7 +1319,9 @@ final class ScheduleStore: ObservableObject {
     func isWeeklyBonusAwarded(for weekKey: String? = nil) -> Bool {
         let wk = weekKey ?? currentWeekPrefix
         let bonusId = StarTransaction.weeklyBonusId(weekKey: wk)
-        return starTransactions.contains(where: { $0.id == bonusId })
+        return starTransactions.contains(where: {
+            $0.id == bonusId || ($0.kind == .weeklyAllClearBonus && $0.weekKey == wk)
+        })
     }
 
     /// 이번 주 평일(월~금) 중 이미 지급된 일일 스타 개수 (0 ~ 5)
@@ -1336,7 +1344,10 @@ final class ScheduleStore: ObservableObject {
 
         let ts = Date().timeIntervalSince1970
         let earnId = StarTransaction.dailyEarnId(weekKey: wk, weekday: weekday)
-        guard !starTransactions.contains(where: { $0.id == earnId }) else { return false }
+        guard !starTransactions.contains(where: {
+            $0.id == earnId ||
+            ($0.kind == .dailyAllClear && $0.weekKey == wk && $0.weekdayRawValue == weekday.rawValue)
+        }) else { return false }
 
         let dailyTx = StarTransaction(
             id: earnId,
@@ -1375,6 +1386,9 @@ final class ScheduleStore: ObservableObject {
 
         saveStarData()
         scheduleCloudPush()
+        Task {
+            await pushImmediateToCloud()
+        }
         return true
     }
 
@@ -1386,13 +1400,18 @@ final class ScheduleStore: ObservableObject {
         timestamp: TimeInterval = Date().timeIntervalSince1970
     ) -> Bool {
         let bonusId = StarTransaction.weeklyBonusId(weekKey: weekKey)
-        guard !starTransactions.contains(where: { $0.id == bonusId }) else {
+        guard !starTransactions.contains(where: {
+            $0.id == bonusId || ($0.kind == .weeklyAllClearBonus && $0.weekKey == weekKey)
+        }) else {
             return false
         }
 
         let allFiveDaysEarned = Weekday.weekdaysOnly.allSatisfy { day in
             let dayEarnId = StarTransaction.dailyEarnId(weekKey: weekKey, weekday: day)
-            return starTransactions.contains(where: { $0.id == dayEarnId })
+            return starTransactions.contains(where: {
+                $0.id == dayEarnId ||
+                ($0.kind == .dailyAllClear && $0.weekKey == weekKey && $0.weekdayRawValue == day.rawValue)
+            })
         }
 
         guard allFiveDaysEarned else { return false }
@@ -1518,6 +1537,9 @@ final class ScheduleStore: ObservableObject {
         saveStarData()
         saveReactionsAndPraises()
         scheduleCloudPush()
+        Task {
+            await pushImmediateToCloud()
+        }
         return true
     }
 
@@ -1566,6 +1588,30 @@ final class ScheduleStore: ObservableObject {
         showToast("↩️ [\(request.rewardTitle)] 교환 신청이 취소되었어요. (스타 차감 없음)")
         saveStarData()
         scheduleCloudPush()
+        Task {
+            await pushImmediateToCloud()
+        }
+    }
+
+    /// 테스트 또는 오지급된 스타 트랜잭션, 보상 교환 신청 및 관련 응원 노트를 원복(영구 취소)
+    func revokeStarTransactionsAndRedemptions(
+        txIds: [String],
+        redemptionIds: [String] = [],
+        praiseNoteIds: [String] = []
+    ) async {
+        self.revokedStarTransactionIds = Array(Set(self.revokedStarTransactionIds + txIds))
+        self.revokedStarRedemptionIds = Array(Set(self.revokedStarRedemptionIds + redemptionIds))
+        self.revokedPraiseNoteIds = Array(Set(self.revokedPraiseNoteIds + praiseNoteIds))
+
+        self.starTransactions.removeAll { self.revokedStarTransactionIds.contains($0.id) }
+        self.starRedemptionRequests.removeAll { self.revokedStarRedemptionIds.contains($0.id.uuidString) }
+        self.praiseNotes.removeAll { note in
+            self.revokedPraiseNoteIds.contains(note.id.uuidString)
+        }
+
+        saveStarData()
+        saveReactionsAndPraises()
+        await pushImmediateToCloud()
     }
 
     // MARK: - ⭐ 스타 보상 프리셋 관리 (추가, 삭제, 기본값 복원)
@@ -2003,6 +2049,22 @@ final class ScheduleStore: ObservableObject {
         }
     }
 
+    /// 스타 지급, 보상 승인 등 즉각적 원격 전파가 필요한 중요 트랜잭션용 즉시 푸시
+    func pushImmediateToCloud() async {
+        guard isCloudSyncEnabled else { return }
+        pushDebounceTask?.cancel()
+        pushDebounceTask = nil
+        await pushMergedStateToCloud()
+    }
+
+    /// 백그라운드 전환 등 앱 중단 직전 대기 중인 푸시 작업을 즉시 flush
+    func flushPendingPush() async {
+        guard isCloudSyncEnabled, pushDebounceTask != nil else { return }
+        pushDebounceTask?.cancel()
+        pushDebounceTask = nil
+        await pushMergedStateToCloud()
+    }
+
     /// 수동 새로고침 / 즉시 동기화
     func syncNow(forceUploadIfEmpty: Bool = true) async {
         guard isCloudSyncEnabled else { return }
@@ -2056,6 +2118,7 @@ final class ScheduleStore: ObservableObject {
             lastSyncedBlobPathname = latestBlob.pathname
             lastSyncedAt = Date()
             lastRemoteUpdatedBy = remoteSnapshot.updatedByRole
+            ScheduleWidgetDataManager.shared.cacheRemoteSnapshot(remoteSnapshot)
 
             // 다른 기기에서 보낸 새로운 이벤트가 있으면 반가운 토스트 & 로컬 알림 표시
             if !isInitialLaunch && remoteSnapshot.updatedByDeviceId != deviceId {
@@ -2145,12 +2208,11 @@ final class ScheduleStore: ObservableObject {
             )
 
             if let latestBlob = latest, latestBlob.pathname != lastSyncedBlobPathname {
-                if let remoteSnapshot = try? await VercelBlobSyncService.shared.downloadSnapshot(
+                let remoteSnapshot = try await VercelBlobSyncService.shared.downloadSnapshot(
                     from: latestBlob.url,
                     token: vercelBlobToken
-                ) {
-                    await applyMergedRemoteSnapshot(remoteSnapshot)
-                }
+                )
+                await applyMergedRemoteSnapshot(remoteSnapshot)
             }
 
             // 2. 병합 완료된 최신 스냅샷 생성 및 업로드
@@ -2166,6 +2228,7 @@ final class ScheduleStore: ObservableObject {
             lastSyncedBlobPathname = putResult.pathname
             lastSyncedAt = Date()
             lastRemoteUpdatedBy = snapshot.updatedByRole
+            ScheduleWidgetDataManager.shared.cacheRemoteSnapshot(snapshot)
         } catch {
             syncErrorMessage = error.localizedDescription
         }
@@ -2196,7 +2259,10 @@ final class ScheduleStore: ObservableObject {
             starTransactions: starTransactions,
             starRedemptionRequests: starRedemptionRequests,
             starRewardPresets: starRewardPresets,
-            deletedStarPresetTimestamps: deletedStarPresetTimestamps
+            deletedStarPresetTimestamps: deletedStarPresetTimestamps,
+            revokedStarTransactionIds: revokedStarTransactionIds,
+            revokedStarRedemptionIds: revokedStarRedemptionIds,
+            revokedPraiseNoteIds: revokedPraiseNoteIds
         )
     }
 
@@ -2302,10 +2368,20 @@ final class ScheduleStore: ObservableObject {
         // 4. 플래그 딕셔너리 -> Set 반영
         refreshFlagSetsFromDictionaries()
 
-        // 5. 전체 응원 노트 병합
+        // 4-1. 취소/원복된 ID 목록 병합
+        self.revokedStarTransactionIds = Array(Set(self.revokedStarTransactionIds + remote.revokedStarTransactionIds))
+        self.revokedStarRedemptionIds = Array(Set(self.revokedStarRedemptionIds + remote.revokedStarRedemptionIds))
+        self.revokedPraiseNoteIds = Array(Set(self.revokedPraiseNoteIds + remote.revokedPraiseNoteIds))
+
+        // 5. 전체 응원 노트 병합 (취소된 노트 제외)
         var noteDict: [UUID: ParentPraiseNote] = [:]
         for n in self.praiseNotes { noteDict[n.id] = n }
         for n in remote.praiseNotes { noteDict[n.id] = n }
+        for rId in self.revokedPraiseNoteIds {
+            if let uuid = UUID(uuidString: rId) {
+                noteDict.removeValue(forKey: uuid)
+            }
+        }
         let mergedNotes = Array(noteDict.values.sorted { $0.createdAt > $1.createdAt }.prefix(40))
         if mergedNotes != self.praiseNotes {
             self.praiseNotes = mergedNotes
@@ -2334,7 +2410,7 @@ final class ScheduleStore: ObservableObject {
             deleted: &deletedRewardPresetTimestamps
         )
 
-        // 6. ⭐ 스타 원장(Append-Only Ledger) 합집합 병합 (결정론적 ID 기준 멱등 병합)
+        // 6. ⭐ 스타 원장(Append-Only Ledger) 합집합 병합 (취소된 트랜잭션 제외)
         var txById: [String: StarTransaction] = [:]
         for tx in self.starTransactions {
             txById[tx.id] = tx
@@ -2349,6 +2425,9 @@ final class ScheduleStore: ObservableObject {
                 txById[rTx.id] = rTx
             }
         }
+        for rId in self.revokedStarTransactionIds {
+            txById.removeValue(forKey: rId)
+        }
         self.starTransactions = txById.values.sorted { $0.createdAt > $1.createdAt }
 
         // 7. ⭐ 병합된 일일 스타 기준으로 주간 올클리어 보너스(+2⭐) 자동 정합성 보정
@@ -2358,7 +2437,7 @@ final class ScheduleStore: ObservableObject {
             _ = evaluateAndGrantWeeklyAllClearBonusIfNeeded(for: wk)
         }
 
-        // 8. ⭐ 스타 보상 교환 신청/승인 내역 병합 (updatedAt 기준 + 확정 상태 우선)
+        // 8. ⭐ 스타 보상 교환 신청/승인 내역 병합 (취소된 교환 제외)
         var reqById: [UUID: StarRedemptionRequest] = [:]
         for req in self.starRedemptionRequests {
             reqById[req.id] = req
@@ -2377,6 +2456,11 @@ final class ScheduleStore: ObservableObject {
                 reqById[rReq.id] = rReq
             }
         }
+        for rId in self.revokedStarRedemptionIds {
+            if let uuid = UUID(uuidString: rId) {
+                reqById.removeValue(forKey: uuid)
+            }
+        }
         self.starRedemptionRequests = Array(reqById.values.sorted { $0.requestedAt > $1.requestedAt }.prefix(100))
 
         // 9. ⭐ 스타 보상 프리셋 병합
@@ -2392,6 +2476,7 @@ final class ScheduleStore: ObservableObject {
         saveRewardPresets()
         saveReactionsAndPraises()
         saveSyncFlags()
+        syncWidgetState()
     }
 
     private func refreshFlagSetsFromDictionaries() {
@@ -2835,13 +2920,30 @@ final class ScheduleStore: ObservableObject {
     }
 
     private func loadStarData() {
+        if let data = UserDefaults.standard.data(forKey: revokedStarTransactionsStorageKey),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            self.revokedStarTransactionIds = decoded
+        }
+        if let data = UserDefaults.standard.data(forKey: revokedStarRedemptionsStorageKey),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            self.revokedStarRedemptionIds = decoded
+        }
+        if let data = UserDefaults.standard.data(forKey: revokedPraiseNotesStorageKey),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            self.revokedPraiseNoteIds = decoded
+        }
+
         if let data = UserDefaults.standard.data(forKey: starTransactionsStorageKey),
            let decoded = try? JSONDecoder().decode([StarTransaction].self, from: data) {
-            self.starTransactions = decoded.sorted { $0.createdAt > $1.createdAt }
+            self.starTransactions = decoded
+                .filter { !self.revokedStarTransactionIds.contains($0.id) }
+                .sorted { $0.createdAt > $1.createdAt }
         }
         if let data = UserDefaults.standard.data(forKey: starRedemptionsStorageKey),
            let decoded = try? JSONDecoder().decode([StarRedemptionRequest].self, from: data) {
-            self.starRedemptionRequests = decoded.sorted { $0.requestedAt > $1.requestedAt }
+            self.starRedemptionRequests = decoded
+                .filter { !self.revokedStarRedemptionIds.contains($0.id.uuidString) }
+                .sorted { $0.requestedAt > $1.requestedAt }
         }
         if let data = UserDefaults.standard.data(forKey: deletedStarPresetsStorageKey),
            let decoded = try? JSONDecoder().decode([String: TimeInterval].self, from: data) {
@@ -2868,6 +2970,15 @@ final class ScheduleStore: ObservableObject {
         }
         if let encoded = try? JSONEncoder().encode(starRewardPresets) {
             UserDefaults.standard.set(encoded, forKey: starRewardPresetsStorageKey)
+        }
+        if let encoded = try? JSONEncoder().encode(revokedStarTransactionIds) {
+            UserDefaults.standard.set(encoded, forKey: revokedStarTransactionsStorageKey)
+        }
+        if let encoded = try? JSONEncoder().encode(revokedStarRedemptionIds) {
+            UserDefaults.standard.set(encoded, forKey: revokedStarRedemptionsStorageKey)
+        }
+        if let encoded = try? JSONEncoder().encode(revokedPraiseNoteIds) {
+            UserDefaults.standard.set(encoded, forKey: revokedPraiseNotesStorageKey)
         }
     }
 

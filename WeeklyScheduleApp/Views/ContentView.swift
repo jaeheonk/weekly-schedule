@@ -155,6 +155,9 @@ struct ContentView: View {
                 #endif
                 store.lockParentMode()
                 notificationManager.stopPreviewSound()
+                Task {
+                    await store.flushPendingPush()
+                }
             } else {
                 store.lockParentMode()
                 notificationManager.stopPreviewSound()
