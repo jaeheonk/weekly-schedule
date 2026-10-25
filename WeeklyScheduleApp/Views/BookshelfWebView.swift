@@ -21,6 +21,21 @@ final class BookshelfURLSchemeHandler: NSObject, WKURLSchemeHandler {
         super.init()
     }
 
+    static func readData(from stream: InputStream) -> Data {
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let bufferSize = 4096
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
+        while stream.hasBytesAvailable {
+            let bytesRead = stream.read(buffer, maxLength: bufferSize)
+            if bytesRead <= 0 { break }
+            data.append(buffer, count: bytesRead)
+        }
+        return data
+    }
+
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
         guard let requestURL = urlSchemeTask.request.url,
               var components = URLComponents(url: requestURL, resolvingAgainstBaseURL: false) else {
@@ -41,12 +56,40 @@ final class BookshelfURLSchemeHandler: NSObject, WKURLSchemeHandler {
 
         var request = URLRequest(url: targetURL, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30)
         request.httpMethod = urlSchemeTask.request.httpMethod ?? "GET"
+
         if let headers = urlSchemeTask.request.allHTTPHeaderFields {
-            for (key, val) in headers where key.lowercased() != "host" {
+            for (key, val) in headers {
+                let lower = key.lowercased()
+                if lower == "host" { continue }
+                // 커스텀 스킴(bookshelf://)으로 인해 잘못 들어간 Origin, Referer, Sec-Fetch-Site는 원본 서버 기준에 맞게 정규화
+                if lower == "origin" || lower == "referer" || lower == "sec-fetch-site" { continue }
                 request.setValue(val, forHTTPHeaderField: key)
             }
         }
-        request.httpBody = urlSchemeTask.request.httpBody
+
+        // gyogwa-books.grok.me 대상 요청에 대해 same-origin 헤더 설정
+        // Cloudflare 및 TanStack Start가 비표준 스킴(bookshelf://)의 호출을 CSRF 차단(403 Forbidden)하는 것을 방지
+        if targetURL.host == Self.defaultHost || targetURL.host?.hasSuffix(".grok.me") == true {
+            request.setValue("https://\(Self.defaultHost)", forHTTPHeaderField: "Origin")
+            request.setValue("https://\(Self.defaultHost)/", forHTTPHeaderField: "Referer")
+            request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+            if request.value(forHTTPHeaderField: "Sec-Fetch-Mode") == nil {
+                request.setValue("cors", forHTTPHeaderField: "Sec-Fetch-Mode")
+            }
+            if request.value(forHTTPHeaderField: "Sec-Fetch-Dest") == nil {
+                request.setValue("empty", forHTTPHeaderField: "Sec-Fetch-Dest")
+            }
+        }
+
+        // HTTP Body 복원: WebKit WKURLSchemeTask가 POST body를 누락시키는 문제를 해결
+        if let base64Body = urlSchemeTask.request.value(forHTTPHeaderField: "X-Proxy-Body-Base64"),
+           let bodyData = Data(base64Encoded: base64Body) {
+            request.httpBody = bodyData
+        } else if let body = urlSchemeTask.request.httpBody {
+            request.httpBody = body
+        } else if let stream = urlSchemeTask.request.httpBodyStream {
+            request.httpBody = Self.readData(from: stream)
+        }
 
         let taskId = ObjectIdentifier(urlSchemeTask)
         let dataTask = session.dataTask(with: request) { [weak self, weak urlSchemeTask] data, response, error in
@@ -72,12 +115,17 @@ final class BookshelfURLSchemeHandler: NSObject, WKURLSchemeHandler {
             }
 
             var headers = httpResponse.allHeaderFields as? [String: String] ?? [:]
-            // CORS 및 CSP 보안 정책 완화 (모든 하위 에셋이 프록시 스킴을 통해 안전하게 렌더링되도록 함)
+            // CORS 및 CSP 보안 정책 완화 (모든 하위 에셋 및 서버 함수 응답이 프록시 스킴을 통해 안전하게 렌더링되도록 함)
             headers["Access-Control-Allow-Origin"] = "*"
             headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS, HEAD"
             headers["Access-Control-Allow-Headers"] = "*"
+            headers["Access-Control-Expose-Headers"] = "*"
             headers.removeValue(forKey: "Content-Security-Policy")
             headers.removeValue(forKey: "content-security-policy")
+            headers.removeValue(forKey: "Content-Encoding")
+            headers.removeValue(forKey: "content-encoding")
+            headers.removeValue(forKey: "Content-Length")
+            headers.removeValue(forKey: "content-length")
 
             // HTML 및 CSS 내부의 https:// 링크를 bookshelf:// 로 치환하여 모든 책 표지 및 스타일 에셋이 프록시를 타도록 보장
             if let mimeType = httpResponse.mimeType?.lowercased(),
@@ -148,6 +196,53 @@ final class BookshelfWebViewModel: ObservableObject {
         if config.responds(to: NSSelectorFromString("showsSystemScreenTimeBlockingView")) {
             config.setValue(true, forKey: "showsSystemScreenTimeBlockingView")
         }
+
+        // fetch 가로채기: WebKit이 WKURLSchemeTask에서 POST Body를 누락시키는 문제를 해결하기 위해
+        // 문자열 바디를 Base64로 인코딩하여 X-Proxy-Body-Base64 헤더로 첨부
+        let proxyScriptSource = """
+        (function() {
+            if (window.__bookshelfProxyInjected) return;
+            window.__bookshelfProxyInjected = true;
+
+            const originalFetch = window.fetch;
+            window.fetch = async function(input, init) {
+                let requestInit = init || {};
+                if (requestInit.body && typeof requestInit.body === 'string') {
+                    try {
+                        const utf8Bytes = new TextEncoder().encode(requestInit.body);
+                        let binary = '';
+                        const len = utf8Bytes.byteLength;
+                        for (let i = 0; i < len; i++) {
+                            binary += String.fromCharCode(utf8Bytes[i]);
+                        }
+                        const base64Body = btoa(binary);
+
+                        let headers = requestInit.headers;
+                        if (headers instanceof Headers) {
+                            headers.set('X-Proxy-Body-Base64', base64Body);
+                        } else if (Array.isArray(headers)) {
+                            headers.push(['X-Proxy-Body-Base64', base64Body]);
+                        } else if (headers && typeof headers === 'object') {
+                            headers['X-Proxy-Body-Base64'] = base64Body;
+                        } else {
+                            requestInit.headers = { 'X-Proxy-Body-Base64': base64Body };
+                        }
+                    } catch (e) {
+                        console.warn('Proxy body encode failed:', e);
+                    }
+                }
+                return originalFetch(input, requestInit);
+            };
+        })();
+        """
+
+        let script = WKUserScript(
+            source: proxyScriptSource,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false
+        )
+        config.userContentController.addUserScript(script)
+
         return config
     }
 
@@ -207,7 +302,7 @@ final class BookshelfWebViewModel: ObservableObject {
     }
 }
 
-// MARK: - WKNavigationDelegate & WKUIDelegate Coordinator
+// MARK: - BookshelfWebCoordinator
 final class BookshelfWebCoordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
     private weak var viewModel: BookshelfWebViewModel?
     private var progressObservation: NSKeyValueObservation?
@@ -614,12 +709,12 @@ struct BookshelfScreenTimeHelpSheet: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    // 주요 특징 2: 외부 이미지 자동 우회 지원
+                    // 주요 특징 2: 외부 이미지 및 기록 동기화 자동 우회
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("2. 책 표지 이미지 자동 우회")
+                        Text("2. 책 표지 및 내 기록 동기화 정상 지원")
                             .font(.headline)
 
-                        Text("알라딘, 네이버 등 외부 도서관 서버에서 불러오는 책 표지 이미지도 앱 내부 프록시를 통해 전달되므로 깨짐 없이 온전히 표시됩니다.")
+                        Text("알라딘, 네이버 등 외부 책 표지 이미지와 클라우드(Vercel Blob)에 보관된 읽은 기록·대출 기록도 앱 내부 프록시를 통해 빠르고 안전하게 동기화됩니다.")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
