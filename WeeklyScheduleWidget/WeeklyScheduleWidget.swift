@@ -61,6 +61,7 @@ struct TodayTasksTimelineProvider: TimelineProvider {
 struct TodayTasksWidgetEntryView: View {
     var entry: TodayTasksWidgetEntry
     @Environment(\.widgetFamily) private var family
+    @Environment(\.colorScheme) private var colorScheme
 
     private var maxVisibleRows: Int {
         switch family {
@@ -84,7 +85,7 @@ struct TodayTasksWidgetEntryView: View {
             headerView
 
             Divider()
-                .overlay(Color.primary.opacity(0.08))
+                .overlay(theme.dividerOverlay)
 
             if entry.summary.totalCheckableCount == 0 {
                 emptySchedulePlaceholder
@@ -99,13 +100,9 @@ struct TodayTasksWidgetEntryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .containerBackground(for: .widget) {
             ZStack {
-                Color(red: 0.98, green: 0.98, blue: 1.0)
+                theme.baseBackground
                 LinearGradient(
-                    colors: [
-                        Color.indigo.opacity(0.06),
-                        Color.mint.opacity(0.04),
-                        Color.clear
-                    ],
+                    colors: theme.gradientColors,
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -124,7 +121,7 @@ struct TodayTasksWidgetEntryView: View {
                     .foregroundStyle(
                         entry.summary.remainingIncompleteCount == 0
                             ? Color.green
-                            : Color.indigo
+                            : theme.accentIndigo
                     )
                     .contentTransition(.numericText())
 
@@ -139,10 +136,10 @@ struct TodayTasksWidgetEntryView: View {
             HStack(spacing: 5) {
                 Text(entry.summary.weekday.fullName)
                     .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.indigo)
+                    .foregroundStyle(theme.accentIndigo)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 3)
-                    .background(Color.indigo.opacity(0.12), in: Capsule())
+                    .background(theme.weekdayBadgeBackground, in: Capsule())
 
                 if entry.summary.totalCheckableCount > 0 {
                     Text("\(entry.summary.completedCheckableCount)/\(entry.summary.totalCheckableCount) 완료")
@@ -150,7 +147,7 @@ struct TodayTasksWidgetEntryView: View {
                         .foregroundStyle(Color.secondary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(Color.secondary.opacity(0.10), in: Capsule())
+                        .background(theme.secondaryBadgeBackground, in: Capsule())
                 }
             }
         }
@@ -179,7 +176,9 @@ struct TodayTasksWidgetEntryView: View {
     }
 
     private func taskRow(for item: WidgetTaskItem) -> some View {
-        HStack(spacing: 8) {
+        let categoryColor = theme.adaptiveCategoryColor(for: item.category)
+
+        return HStack(spacing: 8) {
             // 원형 인터랙티브 체크 버튼 (탭 즉시 '다 했어요' 완료 처리)
             Button(
                 intent: CompleteScheduleItemIntent(
@@ -189,10 +188,10 @@ struct TodayTasksWidgetEntryView: View {
             ) {
                 ZStack {
                     Circle()
-                        .strokeBorder(item.category.color, lineWidth: 2)
+                        .strokeBorder(categoryColor, lineWidth: 2)
                         .frame(width: 20, height: 20)
                     Circle()
-                        .fill(item.category.color.opacity(0.14))
+                        .fill(categoryColor.opacity(theme.categoryFillOpacity))
                         .frame(width: 14, height: 14)
                 }
                 .contentShape(Rectangle())
@@ -202,7 +201,7 @@ struct TodayTasksWidgetEntryView: View {
             // 카테고리 컬러 점 + 할 일 제목 (1줄)
             HStack(spacing: 5) {
                 Circle()
-                    .fill(item.category.color)
+                    .fill(categoryColor)
                     .frame(width: 6, height: 6)
 
                 Text(item.title)
@@ -213,10 +212,10 @@ struct TodayTasksWidgetEntryView: View {
                 if item.subTaskCount > 0 {
                     Text("세부 \(item.subTaskCount)")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(item.category.color)
+                        .foregroundStyle(categoryColor)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(item.category.color.opacity(0.12), in: Capsule())
+                        .background(categoryColor.opacity(theme.categoryBadgeOpacity), in: Capsule())
                 }
             }
 
@@ -228,7 +227,7 @@ struct TodayTasksWidgetEntryView: View {
                 .foregroundStyle(Color.secondary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                .background(theme.timeBadgeBackground, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
         }
     }
 
@@ -262,7 +261,7 @@ struct TodayTasksWidgetEntryView: View {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(Color.indigo)
+                    .foregroundStyle(theme.accentIndigo)
                 Text("오늘 등록된 체크 할 일이 없어요")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(Color.secondary)
@@ -270,6 +269,86 @@ struct TodayTasksWidgetEntryView: View {
             .frame(maxWidth: .infinity, alignment: .center)
             Spacer(minLength: 0)
         }
+    }
+}
+
+// MARK: - Widget Theme & Adaptive Colors
+
+private extension TodayTasksWidgetEntryView {
+    struct Theme {
+        let colorScheme: ColorScheme
+
+        var isDark: Bool { colorScheme == .dark }
+
+        // Background
+        var baseBackground: Color {
+            isDark ? Color(red: 0.11, green: 0.11, blue: 0.13) : Color(red: 0.98, green: 0.98, blue: 1.0)
+        }
+
+        var gradientColors: [Color] {
+            if isDark {
+                return [
+                    Color.indigo.opacity(0.14),
+                    Color.mint.opacity(0.08),
+                    Color.clear
+                ]
+            } else {
+                return [
+                    Color.indigo.opacity(0.06),
+                    Color.mint.opacity(0.04),
+                    Color.clear
+                ]
+            }
+        }
+
+        // Divider
+        var dividerOverlay: Color {
+            Color.primary.opacity(isDark ? 0.12 : 0.08)
+        }
+
+        // Accent / Indigo
+        var accentIndigo: Color {
+            isDark ? Color(red: 0.55, green: 0.62, blue: 1.0) : Color.indigo
+        }
+
+        var weekdayBadgeBackground: Color {
+            accentIndigo.opacity(isDark ? 0.22 : 0.12)
+        }
+
+        // Secondary / Meta Badges
+        var secondaryBadgeBackground: Color {
+            Color.secondary.opacity(isDark ? 0.18 : 0.10)
+        }
+
+        var timeBadgeBackground: Color {
+            Color.secondary.opacity(isDark ? 0.18 : 0.08)
+        }
+
+        // Category Adaptive Color
+        func adaptiveCategoryColor(for category: ScheduleCategory) -> Color {
+            guard isDark else { return category.color }
+            switch category {
+            case .study:
+                // 다크 모드 배경(#1C1C21) 위 명암비 4.5:1 이상 확보를 위한 틴트 조정
+                return Color(red: 0.40, green: 0.65, blue: 1.0)
+            case .academy:
+                return Color(red: 0.70, green: 0.52, blue: 1.0)
+            case .music, .sports, .routine, .free:
+                return category.color
+            }
+        }
+
+        var categoryFillOpacity: Double {
+            isDark ? 0.22 : 0.14
+        }
+
+        var categoryBadgeOpacity: Double {
+            isDark ? 0.20 : 0.12
+        }
+    }
+
+    var theme: Theme {
+        Theme(colorScheme: colorScheme)
     }
 }
 
