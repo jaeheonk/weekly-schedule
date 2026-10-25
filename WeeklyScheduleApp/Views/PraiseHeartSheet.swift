@@ -22,7 +22,7 @@ struct PraiseHeartSheet: View {
     @State private var selectedSticker: ReactionSticker = .heart
     @State private var selectedHeartCount: Int = 1
     @State private var commentText: String = ""
-    @State private var alsoMarkParentVerified: Bool = true
+    @State private var alsoMarkParentVerified: Bool = false
 
     private let quickPresets: [String] = [
         "스스로 다 해내다니 정말 기특해! ❤️",

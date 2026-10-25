@@ -81,6 +81,30 @@ final class ScheduleStore: ObservableObject {
         }
     }
 
+    /// ⭐ 변경 불가능한(Append-Only) 스타 원장 트랜잭션 목록 (최신순 정렬)
+    @Published var starTransactions: [StarTransaction] = [] {
+        didSet {
+            saveStarData()
+        }
+    }
+
+    /// ⭐ 스타 보상 교환 신청 및 부모 승인/반려 내역 (최신순 정렬)
+    @Published var starRedemptionRequests: [StarRedemptionRequest] = [] {
+        didSet {
+            saveStarData()
+        }
+    }
+
+    /// ⭐ 스타 보상 상점 프리셋 목록 (기본: 1스타 -> 하트 5개, 10스타 -> 로벅스 500개)
+    @Published var starRewardPresets: [StarRewardPreset] = StarRewardPreset.defaultPresets {
+        didSet {
+            saveStarData()
+        }
+    }
+
+    /// ⭐ 일일 스타 / 주간 올클리어 보너스 획득 시 화면 축하 모달 표시용 컨텍스트
+    @Published var celebrationBannerContext: StarCelebrationContext? = nil
+
     /// 현재 기기 역할 모드 (.child: 아이의 폰, .parent: 부모님 폰)
     @Published private(set) var deviceRole: DeviceRole = .child
     @Published private(set) var hasConfirmedDeviceRole: Bool = false
@@ -138,6 +162,11 @@ final class ScheduleStore: ObservableObject {
     private var deletedRewardPresetTimestamps: [String: TimeInterval] = [:]
     private let deletedRewardPresetsStorageKey = "weekly_schedule_deleted_reward_presets_v1"
     private let rewardPresetsStorageKey = "weekly_schedule_reward_presets_v1"
+    private var deletedStarPresetTimestamps: [String: TimeInterval] = [:]
+    private let starTransactionsStorageKey = "weekly_schedule_star_transactions_v1"
+    private let starRedemptionsStorageKey = "weekly_schedule_star_redemptions_v1"
+    private let starRewardPresetsStorageKey = "weekly_schedule_star_reward_presets_v1"
+    private let deletedStarPresetsStorageKey = "weekly_schedule_deleted_star_presets_v1"
     private let syncFlagsStorageKey = "weekly_schedule_sync_flags_v1"
     private let vercelTokenStorageKey = "weekly_schedule_vercel_blob_token_v1"
     private let familyCodeStorageKey = "weekly_schedule_family_code_v1"
@@ -147,6 +176,7 @@ final class ScheduleStore: ObservableObject {
     private var lastObservedWeekPrefix: String = ""
     private var lastObservedDay: Date = Calendar.current.startOfDay(for: Date())
     private var dayChangedObserver: NSObjectProtocol?
+    private var widgetCompletionObserver: NSObjectProtocol?
     private var clockTimer: Timer?
     private var syncTimer: Timer?
     private var pushDebounceTask: Task<Void, Never>?
@@ -168,10 +198,13 @@ final class ScheduleStore: ObservableObject {
         loadCompletions()
         loadParentVerifications()
         loadReactionsAndPraises()
+        loadStarData()
         loadSyncFlags()
         reconcileFlagsWithSets()
         normalizeAndDeduplicateLocalItems()
+        absorbWidgetPendingCompletions(triggerCloudPush: false)
         isRestoringLocalState = false
+        syncWidgetState()
 
         let currentDate = Date()
         now = currentDate
@@ -202,10 +235,21 @@ final class ScheduleStore: ObservableObject {
                 self?.refreshDateAndDayChange()
             }
         }
+
+        widgetCompletionObserver = NotificationCenter.default.addObserver(
+            forName: .widgetDidCompleteScheduleItem,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.absorbWidgetPendingCompletions(triggerCloudPush: true)
+            }
+        }
     }
 
     /// 날짜 변경(자정 경과 또는 다음날 앱 복귀) 감지 시 현재 날짜 갱신 및 오늘 요일 자동 선택
     func refreshDateAndDayChange() {
+        absorbWidgetPendingCompletions(triggerCloudPush: true)
         let currentDate = Date()
         self.now = currentDate
         let currentDay = Calendar.current.startOfDay(for: currentDate)
@@ -221,6 +265,7 @@ final class ScheduleStore: ObservableObject {
                 self.lastObservedWeekPrefix = self.currentWeekPrefix
                 self.syncNotifications()
             }
+            self.syncWidgetState()
         }
     }
 
@@ -275,6 +320,7 @@ final class ScheduleStore: ObservableObject {
         } else {
             unlockParentMode()
         }
+        syncWidgetState()
 
         Task {
             await NotificationManager.shared.updateDeviceRole(role)
@@ -574,37 +620,39 @@ final class ScheduleStore: ObservableObject {
         return "\(year)-W\(week)"
     }
 
-    func itemKey(for itemId: UUID) -> String {
-        "\(currentWeekPrefix)_\(itemId.uuidString)"
+    func itemKey(for itemId: UUID, weekKey: String? = nil) -> String {
+        let wk = weekKey ?? currentWeekPrefix
+        return "\(wk)_\(itemId.uuidString)"
     }
 
-    private func subTaskKey(for subTaskId: UUID) -> String {
-        "\(currentWeekPrefix)_\(subTaskId.uuidString)"
+    private func subTaskKey(for subTaskId: UUID, weekKey: String? = nil) -> String {
+        let wk = weekKey ?? currentWeekPrefix
+        return "\(wk)_\(subTaskId.uuidString)"
     }
 
-    func isCompleted(_ item: ScheduleItem) -> Bool {
+    func isCompleted(_ item: ScheduleItem, weekKey: String? = nil) -> Bool {
         guard item.isCheckable else { return false }
-        let key = itemKey(for: item.id)
+        let key = itemKey(for: item.id, weekKey: weekKey)
         return completedItemKeys.contains(key) || parentVerifiedItemKeys.contains(key)
     }
 
-    func isParentVerified(_ item: ScheduleItem) -> Bool {
+    func isParentVerified(_ item: ScheduleItem, weekKey: String? = nil) -> Bool {
         guard item.isCheckable else { return false }
-        return parentVerifiedItemKeys.contains(itemKey(for: item.id))
+        return parentVerifiedItemKeys.contains(itemKey(for: item.id, weekKey: weekKey))
     }
 
-    func isWaitingParentVerification(_ item: ScheduleItem) -> Bool {
+    func isWaitingParentVerification(_ item: ScheduleItem, weekKey: String? = nil) -> Bool {
         guard item.isCheckable else { return false }
-        return isCompleted(item) && !isParentVerified(item)
+        return isCompleted(item, weekKey: weekKey) && !isParentVerified(item, weekKey: weekKey)
     }
 
-    func isSubTaskCompleted(_ subTask: SubTask) -> Bool {
-        let key = subTaskKey(for: subTask.id)
+    func isSubTaskCompleted(_ subTask: SubTask, weekKey: String? = nil) -> Bool {
+        let key = subTaskKey(for: subTask.id, weekKey: weekKey)
         return completedSubTaskKeys.contains(key) || parentVerifiedSubTaskKeys.contains(key)
     }
 
-    func isSubTaskParentVerified(_ subTask: SubTask) -> Bool {
-        parentVerifiedSubTaskKeys.contains(subTaskKey(for: subTask.id))
+    func isSubTaskParentVerified(_ subTask: SubTask, weekKey: String? = nil) -> Bool {
+        parentVerifiedSubTaskKeys.contains(subTaskKey(for: subTask.id, weekKey: weekKey))
     }
 
     /// 아이의 '다 했어요' 완료 토글 (체크리스트는 아이만 체크 가능)
@@ -623,6 +671,7 @@ final class ScheduleStore: ObservableObject {
         }
 
         if isCompleted(item) {
+            let starAlreadyAwarded = isDailyStarAwarded(for: item.weekday)
             completedItemKeys.remove(key)
             parentVerifiedItemKeys.remove(key)
             completionFlags[key] = SyncTimestampedFlag(isSet: false, updatedAt: ts)
@@ -633,6 +682,9 @@ final class ScheduleStore: ObservableObject {
                 parentVerifiedSubTaskKeys.remove(sKey)
                 subTaskCompletionFlags[sKey] = SyncTimestampedFlag(isSet: false, updatedAt: ts)
                 parentVerifiedSubTaskFlags[sKey] = SyncTimestampedFlag(isSet: false, updatedAt: ts)
+            }
+            if starAlreadyAwarded {
+                showToast("ℹ️ 이미 \(item.weekday.fullName) 스타가 지급되어 지급된 스타는 그대로 유지됩니다.")
             }
         } else {
             completedItemKeys.insert(key)
@@ -709,12 +761,16 @@ final class ScheduleStore: ObservableObject {
         let ts = Date().timeIntervalSince1970
 
         if parentVerifiedItemKeys.contains(key) {
+            let starAlreadyAwarded = isDailyStarAwarded(for: item.weekday)
             parentVerifiedItemKeys.remove(key)
             parentVerifiedFlags[key] = SyncTimestampedFlag(isSet: false, updatedAt: ts)
             for sub in item.subTasks {
                 let sKey = subTaskKey(for: sub.id)
                 parentVerifiedSubTaskKeys.remove(sKey)
                 parentVerifiedSubTaskFlags[sKey] = SyncTimestampedFlag(isSet: false, updatedAt: ts)
+            }
+            if starAlreadyAwarded {
+                showToast("ℹ️ 이미 \(item.weekday.fullName) 스타가 지급되었습니다. 일정만 수정하며 지급된 스타는 그대로 유지됩니다.")
             }
         } else {
             guard canParentVerify(item) else {
@@ -748,10 +804,14 @@ final class ScheduleStore: ObservableObject {
         let ts = Date().timeIntervalSince1970
 
         if parentVerifiedSubTaskKeys.contains(sKey) {
+            let starAlreadyAwarded = isDailyStarAwarded(for: parentItem.weekday)
             parentVerifiedSubTaskKeys.remove(sKey)
             parentVerifiedItemKeys.remove(pKey)
             parentVerifiedSubTaskFlags[sKey] = SyncTimestampedFlag(isSet: false, updatedAt: ts)
             parentVerifiedFlags[pKey] = SyncTimestampedFlag(isSet: false, updatedAt: ts)
+            if starAlreadyAwarded {
+                showToast("ℹ️ 이미 \(parentItem.weekday.fullName) 스타가 지급되었습니다. 일정만 수정하며 지급된 스타는 그대로 유지됩니다.")
+            }
         } else {
             guard parentItem.subTasks.contains(where: { $0.id == subTask.id }),
                   canParentVerifySubTask(subTask) else {
@@ -828,6 +888,7 @@ final class ScheduleStore: ObservableObject {
     func resetCompletions(for weekday: Weekday, includeParentVerified: Bool = false) {
         let dayItems = items(for: weekday)
         let ts = Date().timeIntervalSince1970
+        let starAlreadyAwarded = isDailyStarAwarded(for: weekday)
         for item in dayItems {
             let key = itemKey(for: item.id)
             if includeParentVerified || !parentVerifiedItemKeys.contains(key) {
@@ -847,6 +908,9 @@ final class ScheduleStore: ObservableObject {
                     }
                 }
             }
+        }
+        if starAlreadyAwarded && includeParentVerified {
+            showToast("ℹ️ 이미 \(weekday.fullName) 스타가 지급되었습니다. 완료 표시만 초기화하며 지급된 스타는 그대로 유지됩니다.")
         }
         saveSyncFlags()
         scheduleCloudPush()
@@ -1103,6 +1167,473 @@ final class ScheduleStore: ObservableObject {
             unlockParentMode()
         }
         showToast("🔄 추천 보상이 기본값으로 초기화되었어요.")
+        scheduleCloudPush()
+    }
+
+    // MARK: - ⭐ Star Ledger, Daily Quest & Weekly All-Clear Bonus & Star Shop
+
+    /// 전체 기간 누적 적립 스타 총합 (일일 +1 및 주간 보너스 +2 트랜잭션 합산)
+    var totalEarnedStars: Int {
+        starTransactions
+            .filter { $0.delta > 0 }
+            .reduce(0) { $0 + $1.delta }
+    }
+
+    /// 전체 기간 보상 교환으로 차감 완료된 스타 총합 (양수 반환)
+    var totalSpentStars: Int {
+        starTransactions
+            .filter { $0.delta < 0 }
+            .reduce(0) { $0 + abs($1.delta) }
+    }
+
+    /// 현재 확정 사용 가능한 보유 스타 잔액 (원장 모든 delta의 합산, 최소 0)
+    var availableStars: Int {
+        max(0, starTransactions.reduce(0) { $0 + $1.delta })
+    }
+
+    /// 아이가 이미 교환 신청(Pending)하여 대기 중인 스타 합계
+    var reservedPendingStars: Int {
+        starRedemptionRequests
+            .filter { $0.status == .pending }
+            .reduce(0) { $0 + $1.starCost }
+    }
+
+    /// 아이가 추가로 신규 신청 가능한 실질 여유 스타 잔액 (중복 초과 신청 방지용)
+    var requestableStars: Int {
+        max(0, availableStars - reservedPendingStars)
+    }
+
+    /// 이번 주(`currentWeekPrefix`)에 획득한 스타 수 (일일 적립 최대 5 + 주간 보너스 2 = 최대 7)
+    var thisWeekEarnedStars: Int {
+        let wk = currentWeekPrefix
+        return starTransactions
+            .filter { $0.weekKey == wk && $0.delta > 0 }
+            .reduce(0) { $0 + $1.delta }
+    }
+
+    /// 부모 승인을 기다리는 스타 보상 신청 건수
+    var pendingStarRedemptionCount: Int {
+        starRedemptionRequests.filter { $0.status == .pending }.count
+    }
+
+    /// 이번 주 스타 수여 대기(Claimable) 중인 평일 개수
+    var claimableWeekdayCountThisWeek: Int {
+        Weekday.weekdaysOnly.filter { day in
+            if case .claimable = weekdayStarState(for: day) {
+                return true
+            }
+            return false
+        }.count
+    }
+
+    /// 특정 요일·주차에 실제로 적용되는 활성 체크 가능 할 일 목록 (`isSkipped == false` && `isCheckable == true`)
+    func activeCheckableItems(for weekday: Weekday, weekKey: String? = nil) -> [ScheduleItem] {
+        let wk = weekKey ?? currentWeekPrefix
+        var result: [ScheduleItem] = []
+
+        for base in masterItems {
+            if let override = activeOverride(for: base.id, weekKey: wk) {
+                if override.isSkipped {
+                    continue
+                }
+                if var modified = override.overriddenItem {
+                    modified.id = base.id
+                    modified.targetWeekKey = nil
+                    if modified.weekday == weekday && modified.isCheckable {
+                        result.append(modified)
+                    }
+                    continue
+                }
+            }
+            if base.weekday == weekday && base.isCheckable {
+                result.append(base)
+            }
+        }
+
+        let additions = items.filter {
+            $0.targetWeekKey == wk && $0.weekday == weekday && $0.isCheckable
+        }
+        result.append(contentsOf: additions)
+        return result
+    }
+
+    /// 특정 요일의 스타 달성 상태 판정
+    func weekdayStarState(for weekday: Weekday, weekKey: String? = nil) -> WeekdayStarState {
+        // 1. 주말(토·일)은 스타 적립 대상에서 제외
+        if weekday.isWeekend {
+            return .weekendExcluded
+        }
+
+        let wk = weekKey ?? currentWeekPrefix
+        let earnTxId = StarTransaction.dailyEarnId(weekKey: wk, weekday: weekday)
+
+        // 2. 이미 원장(Ledger)에 해당 주차·요일의 일일 스타 지급 기록이 있으면 `.awarded` (옵션 A: 영구 보존)
+        if let existingTx = starTransactions.first(where: { $0.id == earnTxId }) {
+            return .awarded(transaction: existingTx)
+        }
+
+        // 3. 활성 할 일(`isCheckable`)이 최소 1개 이상인지 검사
+        let checkableItems = activeCheckableItems(for: weekday, weekKey: wk)
+        guard !checkableItems.isEmpty else {
+            return .ineligibleEmpty
+        }
+
+        // 4. 아이 완료 체크 및 부모 확인 도장 진행률 계산 (세부 할 일 포함)
+        var completedCount = 0
+        var verifiedCount = 0
+
+        for item in checkableItems {
+            let itemDone = isCompleted(item, weekKey: wk) &&
+                item.subTasks.allSatisfy { isSubTaskCompleted($0, weekKey: wk) }
+            let itemVerified = isParentVerified(item, weekKey: wk) &&
+                item.subTasks.allSatisfy { isSubTaskParentVerified($0, weekKey: wk) }
+
+            if itemDone { completedCount += 1 }
+            if itemVerified { verifiedCount += 1 }
+        }
+
+        let total = checkableItems.count
+        if verifiedCount == total && completedCount == total {
+            // 모든 활성 할 일이 '아이 완료 + 개별 부모 확인 도장' 완료 -> 부모의 '스타 수여 확인' 대기
+            return .claimable(total: total)
+        } else {
+            return .inProgress(completed: completedCount, verified: verifiedCount, total: total)
+        }
+    }
+
+    /// 해당 요일의 일일 스타가 이미 지급되었는지 여부
+    func isDailyStarAwarded(for weekday: Weekday, weekKey: String? = nil) -> Bool {
+        if case .awarded = weekdayStarState(for: weekday, weekKey: weekKey) {
+            return true
+        }
+        return false
+    }
+
+    /// 해당 주차(`weekKey`)의 주간 올클리어 보너스(+2⭐)가 이미 지급되었는지 여부
+    func isWeeklyBonusAwarded(for weekKey: String? = nil) -> Bool {
+        let wk = weekKey ?? currentWeekPrefix
+        let bonusId = StarTransaction.weeklyBonusId(weekKey: wk)
+        return starTransactions.contains(where: { $0.id == bonusId })
+    }
+
+    /// 이번 주 평일(월~금) 중 이미 지급된 일일 스타 개수 (0 ~ 5)
+    func awardedDailyStarCount(for weekKey: String? = nil) -> Int {
+        let wk = weekKey ?? currentWeekPrefix
+        return Weekday.weekdaysOnly.filter { isDailyStarAwarded(for: $0, weekKey: wk) }.count
+    }
+
+    /// 부모가 6자리 PIN 또는 Face ID/Touch ID 인증을 마친 후 해당 평일의 `+1 스타`를 수여합니다.
+    /// - 월~금 5개 일일 스타가 모두 모이면 즉시 자동으로 `+2 스타` 주간 올클리어 보너스가 함께 지급됩니다.
+    @discardableResult
+    func awardDailyStar(for weekday: Weekday, weekKey: String? = nil) -> Bool {
+        guard !weekday.isWeekend else { return false }
+        let wk = weekKey ?? currentWeekPrefix
+
+        // 반드시 `.claimable` 상태일 때만 수여 가능 (중복 지급 및 미달성 지급 원천 차단)
+        guard case .claimable(let totalTasks) = weekdayStarState(for: weekday, weekKey: wk) else {
+            return false
+        }
+
+        let ts = Date().timeIntervalSince1970
+        let earnId = StarTransaction.dailyEarnId(weekKey: wk, weekday: weekday)
+        guard !starTransactions.contains(where: { $0.id == earnId }) else { return false }
+
+        let dailyTx = StarTransaction(
+            id: earnId,
+            kind: .dailyAllClear,
+            delta: 1,
+            weekKey: wk,
+            weekdayRawValue: weekday.rawValue,
+            title: "\(weekday.fullName) 퀘스트 올클리어!",
+            note: "할 일 \(totalTasks)개 완료 & 부모님 확인 완료",
+            createdAt: ts,
+            createdByRole: deviceRole.shortBadgeTitle,
+            linkedRedemptionId: nil,
+            linkedHeartGrantCount: nil
+        )
+        starTransactions.insert(dailyTx, at: 0)
+
+        // 주간 올클리어(월~금 5일 모두 지급 완료) 달성 여부 즉시 평가 -> 자동 +2⭐ 보너스!
+        let bonusGranted = evaluateAndGrantWeeklyAllClearBonusIfNeeded(for: wk, timestamp: ts + 0.001)
+
+        if isParentModeUnlocked {
+            unlockParentMode()
+        }
+
+        celebrationBannerContext = StarCelebrationContext(
+            weekday: weekday,
+            earnedDailyStar: 1,
+            earnedWeeklyBonus: bonusGranted ? 2 : 0,
+            totalAvailableStars: availableStars
+        )
+
+        if bonusGranted {
+            showToast("🎉 이번 주 평일 올클리어! 일일 ⭐+1개와 주간 보너스 ⭐+2개(총 +3⭐)를 획득했어요!")
+        } else {
+            showToast("⭐ \(weekday.fullName) 올클리어 스타 +1개가 지급되었어요! (현재 \(availableStars)⭐)")
+        }
+
+        saveStarData()
+        scheduleCloudPush()
+        return true
+    }
+
+    /// 한 주(`weekKey`)의 월·화·수·목·금 5개 일일 스타가 모두 원장에 기록되어 있는지 확인하고,
+    /// 아직 주간 보너스가 없다면 별도의 추가 부모 확인 없이 자동으로 `+2 스타` 보너스 트랜잭션을 생성합니다.
+    @discardableResult
+    func evaluateAndGrantWeeklyAllClearBonusIfNeeded(
+        for weekKey: String,
+        timestamp: TimeInterval = Date().timeIntervalSince1970
+    ) -> Bool {
+        let bonusId = StarTransaction.weeklyBonusId(weekKey: weekKey)
+        guard !starTransactions.contains(where: { $0.id == bonusId }) else {
+            return false
+        }
+
+        let allFiveDaysEarned = Weekday.weekdaysOnly.allSatisfy { day in
+            let dayEarnId = StarTransaction.dailyEarnId(weekKey: weekKey, weekday: day)
+            return starTransactions.contains(where: { $0.id == dayEarnId })
+        }
+
+        guard allFiveDaysEarned else { return false }
+
+        let bonusTx = StarTransaction(
+            id: bonusId,
+            kind: .weeklyAllClearBonus,
+            delta: 2,
+            weekKey: weekKey,
+            weekdayRawValue: nil,
+            title: "👑 주간 평일 올클리어 보너스!",
+            note: "월~금 5일 연속 스타 달성 자동 보너스 (+2⭐)",
+            createdAt: timestamp,
+            createdByRole: "👑 자동 보너스",
+            linkedRedemptionId: nil,
+            linkedHeartGrantCount: nil
+        )
+        starTransactions.insert(bonusTx, at: 0)
+        starTransactions.sort { $0.createdAt > $1.createdAt }
+        return true
+    }
+
+    /// [아이 모드] 스타 보상 교환 신청 (`Pending` 상태로 등록, 부모 승인 대기)
+    @discardableResult
+    func requestStarRedemption(preset: StarRewardPreset) -> Bool {
+        guard preset.starCost > 0, requestableStars >= preset.starCost else {
+            showToast("교환 신청 가능한 스타가 부족해요! (여유 스타: \(requestableStars)⭐)")
+            return false
+        }
+
+        let ts = Date().timeIntervalSince1970
+        let request = StarRedemptionRequest(
+            id: UUID(),
+            presetId: preset.id,
+            emoji: preset.emoji,
+            rewardTitle: preset.title,
+            starCost: preset.starCost,
+            actionType: preset.actionType,
+            grantedHearts: preset.grantedHearts,
+            status: .pending,
+            requestedAt: ts,
+            requestedByRole: deviceRole.shortBadgeTitle,
+            resolvedAt: nil,
+            resolvedByRole: nil,
+            updatedAt: ts
+        )
+        starRedemptionRequests.insert(request, at: 0)
+        showToast("🙌 [\(preset.title)] 교환을 신청했어요! 부모님이 확인하면 지급됩니다.")
+        saveStarData()
+        scheduleCloudPush()
+        return true
+    }
+
+    /// [부모 인증 완료 후 실행] 대기 중인 스타 보상 교환 신청 승인 (`Approved`) 및 원장 차감
+    /// - `convertToHearts` 유형(1스타 -> 하트 5개)인 경우:
+    ///   원장에 `-1⭐` 차감 트랜잭션을 추가함과 동시에 결정론적 ID(`request.id`)의 `ParentPraiseNote(+5❤️)`를 생성하여
+    ///   하트 잔액에 즉시 `+5❤️`를 원자적(Atomic)으로 반영합니다.
+    @discardableResult
+    func approveStarRedemption(_ request: StarRedemptionRequest) -> Bool {
+        guard let idx = starRedemptionRequests.firstIndex(where: { $0.id == request.id }),
+              starRedemptionRequests[idx].status == .pending else {
+            return false
+        }
+        guard availableStars >= request.starCost else {
+            showToast("보유 스타(\(availableStars)⭐)가 부족하여 승인할 수 없어요.")
+            return false
+        }
+
+        let ts = Date().timeIntervalSince1970
+        let spendTxId = StarTransaction.spendId(requestId: request.id)
+
+        // 1. 요청 상태 업데이트 (.approved)
+        starRedemptionRequests[idx].status = .approved
+        starRedemptionRequests[idx].resolvedAt = ts
+        starRedemptionRequests[idx].resolvedByRole = deviceRole.shortBadgeTitle
+        starRedemptionRequests[idx].updatedAt = ts
+
+        // 2. 스타 원장 차감 트랜잭션 기록 (멱등성 보장)
+        if !starTransactions.contains(where: { $0.id == spendTxId }) {
+            let spendTx = StarTransaction(
+                id: spendTxId,
+                kind: .rewardRedemption,
+                delta: -request.starCost,
+                weekKey: currentWeekPrefix,
+                weekdayRawValue: nil,
+                title: "\(request.emoji) \(request.rewardTitle) 교환",
+                note: request.actionType == .convertToHearts
+                    ? "스타 \(request.starCost)개 → 하트 +\(request.grantedHearts)개 즉시 충전"
+                    : "스타 \(request.starCost)개 보상 교환 승인 완료",
+                createdAt: ts,
+                createdByRole: deviceRole.shortBadgeTitle,
+                linkedRedemptionId: request.id,
+                linkedHeartGrantCount: request.actionType == .convertToHearts ? request.grantedHearts : nil
+            )
+            starTransactions.insert(spendTx, at: 0)
+        }
+
+        // 3. '1스타 -> 하트 5개' 전환 보상인 경우 기존 하트 시스템에 원자적(Atomic)으로 +5❤️ 지급
+        if request.actionType == .convertToHearts, request.grantedHearts > 0 {
+            if !praiseNotes.contains(where: { $0.id == request.id }) {
+                let heartGrantNote = ParentPraiseNote(
+                    id: request.id, // 결정론적 ID: request.id와 동일하게 지정하여 클라우드 병합 시 중복 적립 방지
+                    hearts: request.grantedHearts,
+                    sticker: .star,
+                    message: "⭐ 스타 \(request.starCost)개로 ❤️ 하트 \(request.grantedHearts)개 보너스 충전!",
+                    createdAt: ts
+                )
+                praiseNotes.insert(heartGrantNote, at: 0)
+                if praiseNotes.count > 40 {
+                    let overflow = Array(praiseNotes.suffix(from: 40))
+                    archivedEarnedHearts += overflow.reduce(0) { $0 + $1.hearts }
+                    praiseNotes = Array(praiseNotes.prefix(40))
+                }
+            }
+            showToast("💝 스타 \(request.starCost)개로 하트 +\(request.grantedHearts)개가 즉시 충전되었어요!")
+        } else {
+            showToast("🎁 [\(request.rewardTitle)] 교환 승인 완료! 스타 \(request.starCost)개가 차감되었어요.")
+        }
+
+        if isParentModeUnlocked {
+            unlockParentMode()
+        }
+        saveStarData()
+        saveReactionsAndPraises()
+        scheduleCloudPush()
+        return true
+    }
+
+    /// [부모 인증 완료 후 실행] 스타 보상 즉시 교환 (아이 신청 단계 없이 부모가 현장에서 바로 교환 실행)
+    @discardableResult
+    func redeemStarRewardImmediately(preset: StarRewardPreset) -> Bool {
+        guard preset.starCost > 0, availableStars >= preset.starCost else {
+            showToast("보유 스타(\(availableStars)⭐)가 부족해요!")
+            return false
+        }
+        let ts = Date().timeIntervalSince1970
+        let immediateReq = StarRedemptionRequest(
+            id: UUID(),
+            presetId: preset.id,
+            emoji: preset.emoji,
+            rewardTitle: preset.title,
+            starCost: preset.starCost,
+            actionType: preset.actionType,
+            grantedHearts: preset.grantedHearts,
+            status: .pending,
+            requestedAt: ts,
+            requestedByRole: deviceRole.shortBadgeTitle,
+            resolvedAt: nil,
+            resolvedByRole: nil,
+            updatedAt: ts
+        )
+        starRedemptionRequests.insert(immediateReq, at: 0)
+        return approveStarRedemption(immediateReq)
+    }
+
+    /// [부모 모드 또는 아이 취소] 대기 중인 스타 보상 신청 반려/취소
+    func rejectStarRedemption(_ request: StarRedemptionRequest) {
+        guard let idx = starRedemptionRequests.firstIndex(where: { $0.id == request.id }),
+              starRedemptionRequests[idx].status == .pending else {
+            return
+        }
+        let ts = Date().timeIntervalSince1970
+        starRedemptionRequests[idx].status = .rejected
+        starRedemptionRequests[idx].resolvedAt = ts
+        starRedemptionRequests[idx].resolvedByRole = deviceRole.shortBadgeTitle
+        starRedemptionRequests[idx].updatedAt = ts
+
+        if isParentModeUnlocked {
+            unlockParentMode()
+        }
+        showToast("↩️ [\(request.rewardTitle)] 교환 신청이 취소되었어요. (스타 차감 없음)")
+        saveStarData()
+        scheduleCloudPush()
+    }
+
+    // MARK: - ⭐ 스타 보상 프리셋 관리 (추가, 삭제, 기본값 복원)
+
+    func addStarRewardPreset(
+        emoji: String,
+        title: String,
+        subtitle: String,
+        starCost: Int,
+        actionType: StarRewardActionType = .customVoucher,
+        grantedHearts: Int = 0,
+        badgeTag: String = "스페셜 보상"
+    ) {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTitle.isEmpty, starCost > 0 else { return }
+        let cleanEmoji = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalEmoji = cleanEmoji.isEmpty ? "🌟" : cleanEmoji
+        let cleanSub = subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalSub = cleanSub.isEmpty ? "스타 \(starCost)개로 교환하는 특별 보상!" : cleanSub
+        let cleanBadge = badgeTag.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finalBadge = cleanBadge.isEmpty ? "스페셜 보상" : cleanBadge
+
+        let newPreset = StarRewardPreset(
+            emoji: finalEmoji,
+            title: cleanTitle,
+            subtitle: finalSub,
+            starCost: starCost,
+            actionType: actionType,
+            grantedHearts: actionType == .convertToHearts ? max(1, grantedHearts) : 0,
+            badgeTag: finalBadge,
+            updatedAt: Date().timeIntervalSince1970
+        )
+        guard !starRewardPresets.contains(where: { $0.hasSameContent(as: newPreset) }) else { return }
+        starRewardPresets.append(newPreset.canonicalized)
+        if isParentModeUnlocked {
+            unlockParentMode()
+        }
+        showToast("🌟 [\(cleanTitle)] 스타 보상이 추가되었어요.")
+        scheduleCloudPush()
+    }
+
+    func deleteStarRewardPreset(id: UUID) {
+        guard let index = starRewardPresets.firstIndex(where: { $0.id == id }) else { return }
+        let removed = starRewardPresets[index]
+        deletedStarPresetTimestamps[removed.id.uuidString] = Date().timeIntervalSince1970
+        starRewardPresets.remove(at: index)
+        if isParentModeUnlocked {
+            unlockParentMode()
+        }
+        showToast("🗑️ [\(removed.title)] 스타 보상이 삭제되었어요.")
+        scheduleCloudPush()
+    }
+
+    func resetStarRewardPresetsToDefault() {
+        let timestamp = Date().timeIntervalSince1970
+        for preset in starRewardPresets {
+            deletedStarPresetTimestamps[preset.id.uuidString] = timestamp
+        }
+        starRewardPresets = StarRewardPreset.defaultPresets.map {
+            var preset = $0
+            preset.updatedAt = timestamp.nextUp
+            deletedStarPresetTimestamps.removeValue(forKey: preset.id.uuidString)
+            return preset
+        }
+        if isParentModeUnlocked {
+            unlockParentMode()
+        }
+        showToast("🔄 스타 상점 보상이 기본값(하트 5개 상자, 로벅스 500개)으로 초기화되었어요.")
         scheduleCloudPush()
     }
 
@@ -1455,6 +1986,7 @@ final class ScheduleStore: ObservableObject {
         UserDefaults.standard.set(self.vercelBlobToken, forKey: vercelTokenStorageKey)
         UserDefaults.standard.set(self.familyCode, forKey: familyCodeStorageKey)
         lastSyncedBlobPathname = nil
+        syncWidgetState()
 
         Task {
             await syncNow(forceUploadIfEmpty: true)
@@ -1512,6 +2044,9 @@ final class ScheduleStore: ObservableObject {
             )
             let prevHearts = availableHearts
             let prevSpent = totalSpentHearts
+            let prevEarnedStars = totalEarnedStars
+            let prevSpentStars = totalSpentStars
+            let prevPendingRequests = pendingStarRedemptionCount
             let prevVerifiedCount = parentVerifiedItemKeys.count
             let prevCompletedCount = completedItemKeys.count
             let prevItems = self.items
@@ -1525,12 +2060,41 @@ final class ScheduleStore: ObservableObject {
             // 다른 기기에서 보낸 새로운 이벤트가 있으면 반가운 토스트 & 로컬 알림 표시
             if !isInitialLaunch && remoteSnapshot.updatedByDeviceId != deviceId {
                 let newHearts = totalHeartsThisWeek
+                let newEarnedStars = totalEarnedStars
+                let newSpentStars = totalSpentStars
+                let newPendingRequests = pendingStarRedemptionCount
                 let newVerifiedCount = parentVerifiedItemKeys.count
                 let newCompletedCount = completedItemKeys.count
                 let scheduleChanged = (self.items != prevItems) || (self.weeklyOverrides != prevOverrides)
 
                 let newSpent = totalSpentHearts
-                if newSpent > prevSpent, let latest = rewardRedemptions.first {
+                if newEarnedStars > prevEarnedStars {
+                    let diff = newEarnedStars - prevEarnedStars
+                    let isBonusIncluded = diff >= 2
+                    let msg = isBonusIncluded
+                        ? "🎉 주간 올클리어 보너스 포함 스타 +\(diff)개가 도착했어요! (보유 \(availableStars)⭐)"
+                        : "⭐ 부모님이 오늘의 퀘스트 올클리어 스타 +\(diff)개를 수여해주셨어요!"
+                    showToast(msg)
+                    await NotificationManager.shared.sendInstantSyncEventNotification(
+                        title: isBonusIncluded ? "👑 주간 평일 올클리어 보너스 획득!" : "⭐ 오늘의 스타 +1개 획득!",
+                        body: msg
+                    )
+                } else if newSpentStars > prevSpentStars, let latestApproved = starRedemptionRequests.first(where: { $0.status == .approved }) {
+                    let msg = "🌟 [\(latestApproved.rewardTitle)] 스타 보상 교환이 승인되었어요!"
+                    showToast(msg)
+                    await NotificationManager.shared.sendInstantSyncEventNotification(
+                        title: "🌟 스타 보상 교환 승인 완료!",
+                        body: "[\(latestApproved.rewardTitle)] (스타 \(latestApproved.starCost)개 사용)"
+                    )
+                } else if newPendingRequests > prevPendingRequests && deviceRole == .parent,
+                          let latestPending = starRedemptionRequests.first(where: { $0.status == .pending }) {
+                    let msg = "👦 아이가 [\(latestPending.rewardTitle)] (⭐\(latestPending.starCost)개) 교환을 신청했어요!"
+                    showToast(msg)
+                    await NotificationManager.shared.sendInstantSyncEventNotification(
+                        title: "🌟 아이의 스타 보상 교환 신청!",
+                        body: msg
+                    )
+                } else if newSpent > prevSpent, let latest = rewardRedemptions.first {
                     let diff = newSpent - prevSpent
                     let msg = "🎁 [\(latest.title)] 보상 교환으로 하트 \(diff)개가 사용되었어요!"
                     showToast(msg)
@@ -1607,9 +2171,9 @@ final class ScheduleStore: ObservableObject {
         }
     }
 
-    private func makeCurrentSnapshot() -> CloudSyncSnapshot {
+    func makeCurrentSnapshot() -> CloudSyncSnapshot {
         CloudSyncSnapshot(
-            schemaVersion: 4,
+            schemaVersion: 5,
             familyCode: familyCode,
             updatedAt: Date().timeIntervalSince1970,
             updatedByRole: deviceRole.shortBadgeTitle,
@@ -1628,12 +2192,16 @@ final class ScheduleStore: ObservableObject {
             rewardRedemptions: rewardRedemptions,
             archivedEarnedHearts: archivedEarnedHearts,
             rewardPresets: rewardPresets,
-            deletedRewardPresetTimestamps: deletedRewardPresetTimestamps
+            deletedRewardPresetTimestamps: deletedRewardPresetTimestamps,
+            starTransactions: starTransactions,
+            starRedemptionRequests: starRedemptionRequests,
+            starRewardPresets: starRewardPresets,
+            deletedStarPresetTimestamps: deletedStarPresetTimestamps
         )
     }
 
     /// 원격 스냅샷과 로컬 데이터를 타임스탬프 기준으로 유실 없이 스마트 병합
-    private func applyMergedRemoteSnapshot(_ remote: CloudSyncSnapshot) async {
+    func applyMergedRemoteSnapshot(_ remote: CloudSyncSnapshot) async {
         // 0. 아이 완료 체크 & 부모 확인 플래그 및 하트 리액션 먼저 병합 (아이템 정규화 시 함께 마이그레이션되도록)
         self.completionFlags = Self.mergeFlagDict(local: self.completionFlags, remote: remote.completionFlags)
         self.subTaskCompletionFlags = Self.mergeFlagDict(local: self.subTaskCompletionFlags, remote: remote.subTaskCompletionFlags)
@@ -1766,6 +2334,63 @@ final class ScheduleStore: ObservableObject {
             deleted: &deletedRewardPresetTimestamps
         )
 
+        // 6. ⭐ 스타 원장(Append-Only Ledger) 합집합 병합 (결정론적 ID 기준 멱등 병합)
+        var txById: [String: StarTransaction] = [:]
+        for tx in self.starTransactions {
+            txById[tx.id] = tx
+        }
+        for rTx in remote.starTransactions {
+            if let existing = txById[rTx.id] {
+                // 동일 결정론적 ID 충돌 시 더 먼저 생성된(createdAt이 작은) 원장 기록 유지
+                if rTx.createdAt < existing.createdAt {
+                    txById[rTx.id] = rTx
+                }
+            } else {
+                txById[rTx.id] = rTx
+            }
+        }
+        self.starTransactions = txById.values.sorted { $0.createdAt > $1.createdAt }
+
+        // 7. ⭐ 병합된 일일 스타 기준으로 주간 올클리어 보너스(+2⭐) 자동 정합성 보정
+        // (예: 기기 A에서 월~목 수여, 기기 B에서 금요일 수여 후 병합되어 5일이 모두 모인 경우 즉시 +2⭐ 생성)
+        let distinctWeeks = Set(self.starTransactions.map(\.weekKey))
+        for wk in distinctWeeks {
+            _ = evaluateAndGrantWeeklyAllClearBonusIfNeeded(for: wk)
+        }
+
+        // 8. ⭐ 스타 보상 교환 신청/승인 내역 병합 (updatedAt 기준 + 확정 상태 우선)
+        var reqById: [UUID: StarRedemptionRequest] = [:]
+        for req in self.starRedemptionRequests {
+            reqById[req.id] = req
+        }
+        for rReq in remote.starRedemptionRequests {
+            if let lReq = reqById[rReq.id] {
+                if lReq.status != .pending && rReq.status == .pending {
+                    continue // 이미 로컬에서 승인/반려 처리된 요청은 pending으로 되돌리지 않음
+                }
+                if rReq.status != .pending && lReq.status == .pending {
+                    reqById[rReq.id] = rReq
+                } else if rReq.updatedAt >= lReq.updatedAt {
+                    reqById[rReq.id] = rReq
+                }
+            } else {
+                reqById[rReq.id] = rReq
+            }
+        }
+        self.starRedemptionRequests = Array(reqById.values.sorted { $0.requestedAt > $1.requestedAt }.prefix(100))
+
+        // 9. ⭐ 스타 보상 프리셋 병합
+        for (id, timestamp) in remote.deletedStarPresetTimestamps {
+            deletedStarPresetTimestamps[id] = max(deletedStarPresetTimestamps[id] ?? 0, timestamp)
+        }
+        starRewardPresets = StarRewardPreset.merged(
+            remote.starRewardPresets + starRewardPresets,
+            deleted: &deletedStarPresetTimestamps
+        )
+
+        saveStarData()
+        saveRewardPresets()
+        saveReactionsAndPraises()
         saveSyncFlags()
     }
 
@@ -2101,6 +2726,7 @@ final class ScheduleStore: ObservableObject {
         if let encoded = try? JSONEncoder().encode(items) {
             UserDefaults.standard.set(encoded, forKey: itemsStorageKey)
         }
+        syncWidgetState()
     }
 
     private func loadWeeklyOverrides() {
@@ -2114,6 +2740,7 @@ final class ScheduleStore: ObservableObject {
         if let encoded = try? JSONEncoder().encode(weeklyOverrides) {
             UserDefaults.standard.set(encoded, forKey: weeklyOverridesStorageKey)
         }
+        syncWidgetState()
     }
 
     private func loadCompletions() {
@@ -2207,6 +2834,43 @@ final class ScheduleStore: ObservableObject {
         UserDefaults.standard.set(archivedEarnedHearts, forKey: archivedEarnedHeartsStorageKey)
     }
 
+    private func loadStarData() {
+        if let data = UserDefaults.standard.data(forKey: starTransactionsStorageKey),
+           let decoded = try? JSONDecoder().decode([StarTransaction].self, from: data) {
+            self.starTransactions = decoded.sorted { $0.createdAt > $1.createdAt }
+        }
+        if let data = UserDefaults.standard.data(forKey: starRedemptionsStorageKey),
+           let decoded = try? JSONDecoder().decode([StarRedemptionRequest].self, from: data) {
+            self.starRedemptionRequests = decoded.sorted { $0.requestedAt > $1.requestedAt }
+        }
+        if let data = UserDefaults.standard.data(forKey: deletedStarPresetsStorageKey),
+           let decoded = try? JSONDecoder().decode([String: TimeInterval].self, from: data) {
+            self.deletedStarPresetTimestamps = decoded
+        }
+        if let data = UserDefaults.standard.data(forKey: starRewardPresetsStorageKey),
+           let decoded = try? JSONDecoder().decode([StarRewardPreset].self, from: data) {
+            self.starRewardPresets = StarRewardPreset.merged(decoded, deleted: &deletedStarPresetTimestamps)
+        } else {
+            self.starRewardPresets = StarRewardPreset.merged(StarRewardPreset.defaultPresets, deleted: &deletedStarPresetTimestamps)
+        }
+    }
+
+    private func saveStarData() {
+        guard !isRestoringLocalState else { return }
+        if let encoded = try? JSONEncoder().encode(starTransactions) {
+            UserDefaults.standard.set(encoded, forKey: starTransactionsStorageKey)
+        }
+        if let encoded = try? JSONEncoder().encode(starRedemptionRequests) {
+            UserDefaults.standard.set(encoded, forKey: starRedemptionsStorageKey)
+        }
+        if let encoded = try? JSONEncoder().encode(deletedStarPresetTimestamps) {
+            UserDefaults.standard.set(encoded, forKey: deletedStarPresetsStorageKey)
+        }
+        if let encoded = try? JSONEncoder().encode(starRewardPresets) {
+            UserDefaults.standard.set(encoded, forKey: starRewardPresetsStorageKey)
+        }
+    }
+
     private struct LocalSyncFlagsBundle: Codable {
         var deletedItemTimestamps: [String: TimeInterval]
         var completionFlags: [String: SyncTimestampedFlag]
@@ -2237,6 +2901,67 @@ final class ScheduleStore: ObservableObject {
         )
         if let encoded = try? JSONEncoder().encode(bundle) {
             UserDefaults.standard.set(encoded, forKey: syncFlagsStorageKey)
+        }
+        syncWidgetState()
+    }
+
+    // MARK: - Home Screen Interactive Widget Bridge
+
+    func syncWidgetState() {
+        guard !isRestoringLocalState else { return }
+        ScheduleWidgetDataManager.shared.saveStateFromMainApp(
+            vercelBlobToken: vercelBlobToken,
+            familyCode: familyCode,
+            deviceId: deviceId,
+            deviceRoleShortTitle: deviceRole.shortBadgeTitle,
+            items: items,
+            deletedItemTimestamps: deletedItemTimestamps,
+            weeklyOverrides: weeklyOverrides,
+            completionFlags: completionFlags,
+            subTaskCompletionFlags: subTaskCompletionFlags,
+            parentVerifiedFlags: parentVerifiedFlags,
+            parentVerifiedSubTaskFlags: parentVerifiedSubTaskFlags
+        )
+    }
+
+    func absorbWidgetPendingCompletions(triggerCloudPush: Bool) {
+        let pending = ScheduleWidgetDataManager.shared.consumePendingCompletionsForMainApp()
+        guard !pending.completionFlags.isEmpty || !pending.subTaskCompletionFlags.isEmpty else {
+            return
+        }
+
+        var didChange = false
+        for (key, rFlag) in pending.completionFlags {
+            if let lFlag = completionFlags[key] {
+                if rFlag.updatedAt > lFlag.updatedAt || (rFlag.updatedAt == lFlag.updatedAt && rFlag.isSet != lFlag.isSet) {
+                    completionFlags[key] = rFlag
+                    didChange = true
+                }
+            } else {
+                completionFlags[key] = rFlag
+                didChange = true
+            }
+        }
+
+        for (key, rFlag) in pending.subTaskCompletionFlags {
+            if let lFlag = subTaskCompletionFlags[key] {
+                if rFlag.updatedAt > lFlag.updatedAt || (rFlag.updatedAt == lFlag.updatedAt && rFlag.isSet != lFlag.isSet) {
+                    subTaskCompletionFlags[key] = rFlag
+                    didChange = true
+                }
+            } else {
+                subTaskCompletionFlags[key] = rFlag
+                didChange = true
+            }
+        }
+
+        if didChange {
+            refreshFlagSetsFromDictionaries()
+            saveCompletions()
+            saveSyncFlags()
+            if triggerCloudPush && !isRestoringLocalState {
+                scheduleCloudPush()
+            }
         }
     }
 

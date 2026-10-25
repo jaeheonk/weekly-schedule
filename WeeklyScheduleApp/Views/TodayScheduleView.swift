@@ -11,6 +11,7 @@ struct TodayScheduleView: View {
     @State private var pinPrompt: ParentPinPromptContext? = nil
     @State private var praisePrompt: PraiseHeartPromptContext? = nil
     @State private var showingRewardExchangeSheet: Bool = false
+    @State private var showingStarShopSheet: Bool = false
 
     private var filteredItems: [ScheduleItem] {
         let dayItems = store.items(for: store.selectedWeekday)
@@ -26,7 +27,7 @@ struct TodayScheduleView: View {
         NavigationStack {
             ScrollViewReader { _ in
                 ScrollView {
-                    VStack(spacing: 16) {
+                    VStack(spacing: 12) {
                         // 0. 최초 실행 시 이 기기가 '아이의 폰'인지 '부모님 폰'인지 선택하는 배너
                         if !store.hasConfirmedDeviceRole {
                             deviceRoleOnboardingBanner
@@ -53,11 +54,34 @@ struct TodayScheduleView: View {
                             onTapRewardExchange: {
                                 showingRewardExchangeSheet = true
                             },
+                            onTapStarShop: {
+                                showingStarShopSheet = true
+                            },
                             onTapSendFamilyHeart: {
                                 performParentAction(
                                     reason: "아이에게 ❤️ 하트와 응원 메시지를 보내려면 부모 인증이 필요해요."
                                 ) {
                                     praisePrompt = PraiseHeartPromptContext(target: .familyBanner)
+                                }
+                            }
+                        )
+                        .padding(.horizontal, 16)
+
+                        // 1.5. ⭐ 이번 주 평일 스타 스탬프 보드 (월~금 +1⭐ & 5일 올클리어 +2⭐ 자동 보너스)
+                        WeeklyStarStampBoardCard(
+                            onTapWeekdaySlot: { day in
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    store.selectedWeekday = day
+                                }
+                            },
+                            onTapStarShop: {
+                                showingStarShopSheet = true
+                            },
+                            onRequestAwardStar: { day in
+                                performParentAction(
+                                    reason: "\(day.fullName)의 모든 할 일과 부모님 확인이 완료되었어요! 오늘의 올클리어 스타(+1⭐)를 수여할까요?"
+                                ) {
+                                    _ = store.awardDailyStar(for: day)
                                 }
                             }
                         )
@@ -237,6 +261,26 @@ struct TodayScheduleView: View {
                 }
                 .sheet(isPresented: $showingRewardExchangeSheet) {
                     RewardExchangeSheet()
+                }
+                .sheet(isPresented: $showingStarShopSheet) {
+                    StarRewardShopSheet()
+                }
+                .overlay {
+                    if let celebration = store.celebrationBannerContext {
+                        StarCelebrationModalView(
+                            context: celebration,
+                            onDismiss: {
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    store.celebrationBannerContext = nil
+                                }
+                            },
+                            onOpenStarShop: {
+                                showingStarShopSheet = true
+                            }
+                        )
+                        .transition(.opacity.combined(with: .scale(scale: 0.95)))
+                        .zIndex(150)
+                    }
                 }
                 .confirmationDialog(
                     "이번 주 조정한 스케줄을 원래 기본 시간표로 되돌릴까요?",
@@ -670,6 +714,7 @@ struct LiveStatusHeroCard: View {
     var onTapItem: (ScheduleItem) -> Void
     var onRequestParentAuth: (String, @escaping () -> Void) -> Void
     var onTapRewardExchange: () -> Void
+    var onTapStarShop: () -> Void = {}
     var onTapSendFamilyHeart: () -> Void
 
     private var dateTitleString: String {
@@ -685,8 +730,8 @@ struct LiveStatusHeroCard: View {
         let nextItem = store.nextUpcomingItem
         let totalHearts = store.totalHeartsThisWeek
 
-        VStack(alignment: .leading, spacing: 12) {
-            // 상단 날짜 + 받은 하트 카운터 + 부모님 응원 버튼
+        VStack(alignment: .leading, spacing: 10) {
+            // 상단 날짜 + 받은 하트 카운터 + 부모님 응원 버튼 (스타 상점 진입은 하단 컴팩트 스타 바에서 통합 제공)
             HStack(alignment: .center, spacing: 8) {
                 Text(dateTitleString)
                     .font(.subheadline.weight(.semibold))
@@ -1056,20 +1101,29 @@ struct WeekdaySelectorBar: View {
                 let isSelected = store.selectedWeekday == day
                 let isToday = store.todayWeekday == day
                 let stats = store.completionStats(for: day)
+                let starState = store.weekdayStarState(for: day)
                 let allVerified = stats.total > 0 && stats.verified == stats.total
                 let allChildDone = stats.total > 0 && stats.completed == stats.total
                 let hasAdjustment = store.adjustmentCount(for: day) > 0
+                let isStarClaimable: Bool = {
+                    if case .claimable = starState { return true }
+                    return false
+                }()
 
                 Button {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
                         store.selectedWeekday = day
                     }
                 } label: {
-                    VStack(spacing: 4) {
+                    VStack(spacing: 3) {
                         if isToday {
                             Text("오늘")
                                 .font(.system(size: 9, weight: .bold))
                                 .foregroundStyle(isSelected ? .white.opacity(0.9) : .blue)
+                        } else if isStarClaimable {
+                            Text("수여")
+                                .font(.system(size: 8.5, weight: .heavy))
+                                .foregroundStyle(isSelected ? .yellow : .pink)
                         } else if hasAdjustment {
                             Text("조정")
                                 .font(.system(size: 8.5, weight: .bold))
@@ -1087,26 +1141,37 @@ struct WeekdaySelectorBar: View {
                                 (day == .sunday ? .red : (day == .saturday ? .blue : .primary))
                             )
 
-                        if allVerified {
-                            Image(systemName: "checkmark.seal.fill")
-                                .font(.system(size: 9))
-                                .foregroundStyle(isSelected ? .yellow : .green)
-                        } else if allChildDone {
+                        switch starState {
+                        case .awarded:
                             Image(systemName: "star.fill")
-                                .font(.system(size: 8))
+                                .font(.system(size: 9.5, weight: .bold))
                                 .foregroundStyle(isSelected ? .yellow : .orange)
-                        } else {
-                            Circle()
-                                .fill(
-                                    stats.completed > 0
-                                        ? (isSelected ? Color.white : Color.blue)
-                                        : (hasAdjustment ? (isSelected ? Color.yellow : Color.orange.opacity(0.75)) : Color.clear)
-                                )
-                                .frame(width: 5, height: 5)
+                        case .claimable:
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(isSelected ? .yellow : .pink)
+                        default:
+                            if allVerified {
+                                Image(systemName: "checkmark.seal.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(isSelected ? .yellow : .green)
+                            } else if allChildDone {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 8.5))
+                                    .foregroundStyle(isSelected ? .yellow : .orange)
+                            } else {
+                                Circle()
+                                    .fill(
+                                        stats.completed > 0
+                                            ? (isSelected ? Color.white : Color.blue)
+                                            : (hasAdjustment ? (isSelected ? Color.yellow : Color.orange.opacity(0.75)) : Color.clear)
+                                    )
+                                    .frame(width: 5, height: 5)
+                            }
                         }
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 6)
                     .background(
                         RoundedRectangle(cornerRadius: 14)
                             .fill(
@@ -1118,9 +1183,11 @@ struct WeekdaySelectorBar: View {
                     .overlay(
                         RoundedRectangle(cornerRadius: 14)
                             .stroke(
-                                isToday && !isSelected
-                                    ? Color.accentColor.opacity(0.45)
-                                    : (hasAdjustment && !isSelected ? Color.orange.opacity(0.4) : Color.clear),
+                                isStarClaimable && !isSelected
+                                    ? Color.pink.opacity(0.65)
+                                    : (isToday && !isSelected
+                                        ? Color.accentColor.opacity(0.45)
+                                        : (hasAdjustment && !isSelected ? Color.orange.opacity(0.4) : Color.clear)),
                                 lineWidth: 1.5
                             )
                     )

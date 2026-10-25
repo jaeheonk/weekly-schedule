@@ -41,6 +41,7 @@ struct MacContentView: View {
     @State private var showingPinPrompt: ParentPinPromptContext? = nil
     @State private var showingHeartPrompt: PraiseHeartPromptContext? = nil
     @State private var showingRewardSheet: Bool = false
+    @State private var showingStarShopSheet: Bool = false
     @State private var scheduleToEdit: ScheduleItem? = nil
 
     var body: some View {
@@ -103,6 +104,19 @@ struct MacContentView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                // ⭐ 스타 보유량 & 스타 보상 상점 버튼
+                Button {
+                    showingStarShopSheet = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "star.fill")
+                            .foregroundStyle(Color.orange)
+                        Text("\(store.availableStars)개")
+                            .fontWeight(.bold)
+                    }
+                }
+                .help("스타 잔액 확인 및 스타 보상 상점 열기")
+
                 // 하트 보유량 & 보상 교환 버튼
                 Button {
                     showingRewardSheet = true
@@ -174,6 +188,11 @@ struct MacContentView: View {
             RewardExchangeSheet()
                 .environmentObject(store)
                 .frame(minWidth: 500, minHeight: 620)
+        }
+        .sheet(isPresented: $showingStarShopSheet) {
+            StarRewardShopSheet()
+                .environmentObject(store)
+                .frame(minWidth: 540, minHeight: 680)
         }
         .task {
             await store.syncNow(forceUploadIfEmpty: false)

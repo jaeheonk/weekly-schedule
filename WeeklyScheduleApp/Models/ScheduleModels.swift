@@ -59,6 +59,9 @@ enum Weekday: Int, CaseIterable, Codable, Identifiable {
     var isWeekend: Bool {
         self == .saturday || self == .sunday
     }
+
+    /// 평일(월~금) 스타 적립 대상 요일 목록
+    static let weekdaysOnly: [Weekday] = [.monday, .tuesday, .wednesday, .thursday, .friday]
 }
 
 // MARK: - ScheduleCategory
@@ -727,9 +730,191 @@ struct SyncTimestampedFlag: Codable, Equatable {
     var updatedAt: TimeInterval
 }
 
+// MARK: - ⭐ 스타(Star) 원장(Ledger) 및 보상 상점 모델
+
+/// 스타 원장(Ledger) 트랜잭션 유형
+enum StarTransactionKind: String, Codable, Equatable {
+    case dailyAllClear = "dailyAllClear"           // 평일(월~금) 일일 퀘스트 올클리어 부모 수여 (+1⭐)
+    case weeklyAllClearBonus = "weeklyAllClearBonus" // 월~금 5일 올클리어 주간 자동 보너스 (+2⭐)
+    case rewardRedemption = "rewardRedemption"     // 보상 상점 교환 차감 (-1⭐, -10⭐ 등)
+}
+
+/// 변경 불가능한(Immutable) 스타 원장(Append-Only Ledger) 엔트리
+/// - 결정론적 ID(`id`)를 사용하여 다중 기기 동시 동기화 시에도 중복 적립/차감을 100% 방지합니다.
+struct StarTransaction: Identifiable, Codable, Equatable {
+    /// 결정론적 고유 ID:
+    /// - 일일 적립: "star_earn_{weekKey}_{weekdayRawValue}" (예: "star_earn_2026-W42_1")
+    /// - 주간 올클리어 보너스: "star_bonus_weekly_{weekKey}" (예: "star_bonus_weekly_2026-W42")
+    /// - 보상 차감: "star_spend_{redemptionRequestUUID}"
+    var id: String
+    var kind: StarTransactionKind
+    var delta: Int                      // +1, +2, -1, -10 등
+    var weekKey: String                 // "2026-W42"
+    var weekdayRawValue: Int?           // 일일 적립 시 1(월)~5(금), 주간 보너스/차감 시 nil
+    var title: String                   // 예: "월요일 일일 퀘스트 올클리어", "이번 주 평일 올클리어 보너스!"
+    var note: String                    // 부가 설명 또는 교환 보상 상세
+    var createdAt: TimeInterval
+    var createdByRole: String           // "👩‍👨 부모님 폰" 등
+    var linkedRedemptionId: UUID?       // 보상 차감 시 연결된 StarRedemptionRequest.id
+    var linkedHeartGrantCount: Int?     // 1스타 -> 5하트 전환 시 함께 지급된 하트 개수 (5)
+
+    static func dailyEarnId(weekKey: String, weekday: Weekday) -> String {
+        "star_earn_\(weekKey)_\(weekday.rawValue)"
+    }
+
+    static func weeklyBonusId(weekKey: String) -> String {
+        "star_bonus_weekly_\(weekKey)"
+    }
+
+    static func spendId(requestId: UUID) -> String {
+        "star_spend_\(requestId.uuidString)"
+    }
+}
+
+/// 특정 요일의 스타 달성 상태 (UI 배지 및 수여 버튼 판정용)
+enum WeekdayStarState: Equatable {
+    case weekendExcluded                            // 토·일요일 (스타 적립 대상 제외)
+    case ineligibleEmpty                            // 평일이지만 활성 할 일(isCheckable)이 0개
+    case inProgress(completed: Int, verified: Int, total: Int) // 진행 중 (일부 미완료 또는 부모 미확인)
+    case claimable(total: Int)                      // 모든 할 일 아이 완료 + 부모 확인 완료 -> 부모의 '스타 수여 확인' 대기
+    case awarded(transaction: StarTransaction)      // 이미 해당 요일 +1 스타 지급 완료
+}
+
+/// 스타 보상 아이템의 실행 유형
+enum StarRewardActionType: String, Codable, Equatable {
+    case convertToHearts = "convertToHearts"        // 스타 차감과 동시에 하트(❤️) 즉시 충전 (예: 1⭐ -> +5❤️)
+    case customVoucher = "customVoucher"            // 실물/디지털 보상 교환권 발급 (예: 10⭐ -> 로블록스 로벅스 500개)
+}
+
+/// 스타 상점 보상 프리셋 모델
+struct StarRewardPreset: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var emoji: String
+    var title: String
+    var subtitle: String
+    var starCost: Int
+    var actionType: StarRewardActionType
+    var grantedHearts: Int              // convertToHearts일 때 지급할 하트 수 (기본 5), customVoucher면 0
+    var badgeTag: String                // 예: "즉시 충전", "대형 목표"
+    var updatedAt: TimeInterval = 1_700_000_000
+
+    static let heartBonusPresetId = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 1))
+    static let robux500PresetId   = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2))
+
+    static let defaultPresets: [StarRewardPreset] = [
+        StarRewardPreset(
+            id: heartBonusPresetId,
+            emoji: "💝",
+            title: "하트 5개 보너스 상자",
+            subtitle: "스타 1개로 하트 5개를 즉시 충전해요!",
+            starCost: 1,
+            actionType: .convertToHearts,
+            grantedHearts: 5,
+            badgeTag: "즉시 충전"
+        ),
+        StarRewardPreset(
+            id: robux500PresetId,
+            emoji: "🎮",
+            title: "로블록스 로벅스 500개",
+            subtitle: "열심히 모은 스타 10개로 교환하는 스페셜 보상!",
+            starCost: 10,
+            actionType: .customVoucher,
+            grantedHearts: 0,
+            badgeTag: "스페셜 목표"
+        )
+    ]
+
+    func hasSameContent(as other: StarRewardPreset) -> Bool {
+        emoji == other.emoji &&
+        title == other.title &&
+        starCost == other.starCost &&
+        actionType == other.actionType &&
+        grantedHearts == other.grantedHearts
+    }
+
+    var canonicalized: StarRewardPreset {
+        var result = self
+        if let original = Self.defaultPresets.first(where: { hasSameContent(as: $0) }) {
+            result.id = original.id
+        }
+        return result
+    }
+
+    static func merged(
+        _ presets: [StarRewardPreset],
+        deleted: inout [String: TimeInterval]
+    ) -> [StarRewardPreset] {
+        var byID: [UUID: StarRewardPreset] = [:]
+        var order: [UUID] = []
+        for original in presets {
+            let preset = original.canonicalized
+            if let timestamp = deleted[original.id.uuidString] {
+                deleted[preset.id.uuidString] = max(deleted[preset.id.uuidString] ?? 0, timestamp)
+            }
+            if let existing = byID[preset.id] {
+                if preset.updatedAt > existing.updatedAt {
+                    byID[preset.id] = preset
+                }
+            } else {
+                order.append(preset.id)
+                byID[preset.id] = preset
+            }
+        }
+        var result: [StarRewardPreset] = []
+        for id in order {
+            guard let preset = byID[id],
+                  preset.updatedAt > (deleted[id.uuidString] ?? 0) else { continue }
+            if let index = result.firstIndex(where: { $0.hasSameContent(as: preset) }) {
+                let existing = result[index]
+                let keepPreset = preset.updatedAt > existing.updatedAt ||
+                    (preset.updatedAt == existing.updatedAt && preset.id.uuidString < existing.id.uuidString)
+                let discarded = keepPreset ? existing : preset
+                deleted[discarded.id.uuidString] = max(deleted[discarded.id.uuidString] ?? 0, discarded.updatedAt)
+                if keepPreset { result[index] = preset }
+            } else {
+                result.append(preset)
+            }
+        }
+        return result
+    }
+}
+
+/// 아이의 스타 보상 교환 신청 및 부모 승인 상태
+enum StarRedemptionStatus: String, Codable, Equatable {
+    case pending = "pending"       // 아이가 신청함 (부모 승인 대기 중)
+    case approved = "approved"     // 부모 인증 후 승인 및 지급 완료 (원장에 차감 트랜잭션 생성됨)
+    case rejected = "rejected"     // 부모가 반려/취소함 (스타 차감 없음)
+}
+
+/// 스타 보상 교환 요청/이력 엔트리
+struct StarRedemptionRequest: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var presetId: UUID
+    var emoji: String
+    var rewardTitle: String
+    var starCost: Int
+    var actionType: StarRewardActionType
+    var grantedHearts: Int
+    var status: StarRedemptionStatus
+    var requestedAt: TimeInterval
+    var requestedByRole: String         // "👦 아이 폰" 또는 "👩‍👨 부모님 폰"
+    var resolvedAt: TimeInterval?
+    var resolvedByRole: String?
+    var updatedAt: TimeInterval
+}
+
+/// 스타 획득 축하 배너/모달 표시용 컨텍스트
+struct StarCelebrationContext: Identifiable, Equatable {
+    var id = UUID()
+    var weekday: Weekday?
+    var earnedDailyStar: Int            // +1
+    var earnedWeeklyBonus: Int          // 0 또는 +2 (금요일까지 5일 올클리어 시)
+    var totalAvailableStars: Int
+}
+
 // MARK: - Vercel Blob 클라우드 동기화 스냅샷 모델
 struct CloudSyncSnapshot: Codable, Equatable {
-    var schemaVersion: Int = 4
+    var schemaVersion: Int = 5
     var familyCode: String
     var updatedAt: TimeInterval
     var updatedByRole: String
@@ -768,6 +953,16 @@ struct CloudSyncSnapshot: Codable, Equatable {
     var rewardPresets: [RewardPreset]
     var deletedRewardPresetTimestamps: [String: TimeInterval]
 
+    /// ⭐ 스타 원장(Append-Only Ledger) 트랜잭션 리스트 (v5 신규)
+    var starTransactions: [StarTransaction]
+
+    /// ⭐ 스타 보상 교환 신청 및 승인/반려 내역 (v5 신규)
+    var starRedemptionRequests: [StarRedemptionRequest]
+
+    /// ⭐ 스타 보상 상점 프리셋 및 삭제 타임스탬프 (v5 신규)
+    var starRewardPresets: [StarRewardPreset]
+    var deletedStarPresetTimestamps: [String: TimeInterval]
+
     enum CodingKeys: String, CodingKey {
         case schemaVersion, familyCode, updatedAt, updatedByRole, updatedByDeviceId
         case parentPinCode, parentPinUpdatedAt
@@ -775,10 +970,11 @@ struct CloudSyncSnapshot: Codable, Equatable {
         case completionFlags, subTaskCompletionFlags, parentVerifiedFlags, parentVerifiedSubTaskFlags
         case itemReactions, praiseNotes
         case rewardRedemptions, archivedEarnedHearts, rewardPresets, deletedRewardPresetTimestamps
+        case starTransactions, starRedemptionRequests, starRewardPresets, deletedStarPresetTimestamps
     }
 
     init(
-        schemaVersion: Int = 4,
+        schemaVersion: Int = 5,
         familyCode: String,
         updatedAt: TimeInterval,
         updatedByRole: String,
@@ -797,7 +993,11 @@ struct CloudSyncSnapshot: Codable, Equatable {
         rewardRedemptions: [HeartRewardRedemption] = [],
         archivedEarnedHearts: Int = 0,
         rewardPresets: [RewardPreset] = RewardPreset.defaultPresets,
-        deletedRewardPresetTimestamps: [String: TimeInterval] = [:]
+        deletedRewardPresetTimestamps: [String: TimeInterval] = [:],
+        starTransactions: [StarTransaction] = [],
+        starRedemptionRequests: [StarRedemptionRequest] = [],
+        starRewardPresets: [StarRewardPreset] = StarRewardPreset.defaultPresets,
+        deletedStarPresetTimestamps: [String: TimeInterval] = [:]
     ) {
         self.schemaVersion = schemaVersion
         self.familyCode = familyCode
@@ -819,6 +1019,10 @@ struct CloudSyncSnapshot: Codable, Equatable {
         self.archivedEarnedHearts = archivedEarnedHearts
         self.rewardPresets = rewardPresets
         self.deletedRewardPresetTimestamps = deletedRewardPresetTimestamps
+        self.starTransactions = starTransactions
+        self.starRedemptionRequests = starRedemptionRequests
+        self.starRewardPresets = starRewardPresets
+        self.deletedStarPresetTimestamps = deletedStarPresetTimestamps
     }
 
     init(from decoder: Decoder) throws {
@@ -843,5 +1047,10 @@ struct CloudSyncSnapshot: Codable, Equatable {
         archivedEarnedHearts = try container.decodeIfPresent(Int.self, forKey: .archivedEarnedHearts) ?? 0
         rewardPresets = try container.decodeIfPresent([RewardPreset].self, forKey: .rewardPresets) ?? []
         deletedRewardPresetTimestamps = try container.decodeIfPresent([String: TimeInterval].self, forKey: .deletedRewardPresetTimestamps) ?? [:]
+        // v4 이하 스냅샷 하위 호환 디코딩 (키 누락 시 빈 배열/기본 프리셋 폴백)
+        starTransactions = try container.decodeIfPresent([StarTransaction].self, forKey: .starTransactions) ?? []
+        starRedemptionRequests = try container.decodeIfPresent([StarRedemptionRequest].self, forKey: .starRedemptionRequests) ?? []
+        starRewardPresets = try container.decodeIfPresent([StarRewardPreset].self, forKey: .starRewardPresets) ?? StarRewardPreset.defaultPresets
+        deletedStarPresetTimestamps = try container.decodeIfPresent([String: TimeInterval].self, forKey: .deletedStarPresetTimestamps) ?? [:]
     }
 }
