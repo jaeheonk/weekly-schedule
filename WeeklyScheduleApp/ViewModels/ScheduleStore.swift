@@ -1400,6 +1400,7 @@ final class ScheduleStore: ObservableObject {
         timestamp: TimeInterval = Date().timeIntervalSince1970
     ) -> Bool {
         let bonusId = StarTransaction.weeklyBonusId(weekKey: weekKey)
+        guard !revokedStarTransactionIds.contains(bonusId) else { return false }
         guard !starTransactions.contains(where: {
             $0.id == bonusId || ($0.kind == .weeklyAllClearBonus && $0.weekKey == weekKey)
         }) else {
@@ -1462,6 +1463,9 @@ final class ScheduleStore: ObservableObject {
         showToast("🙌 [\(preset.title)] 교환을 신청했어요! 부모님이 확인하면 지급됩니다.")
         saveStarData()
         scheduleCloudPush()
+        Task {
+            await pushImmediateToCloud()
+        }
         return true
     }
 
@@ -1612,6 +1616,72 @@ final class ScheduleStore: ObservableObject {
         saveStarData()
         saveReactionsAndPraises()
         await pushImmediateToCloud()
+    }
+
+    /// 부모 인증 후 특정 스타 트랜잭션을 영구 회수(삭제)하고 아이 폰과 즉시 동기화합니다.
+    func revokeStarTransaction(_ tx: StarTransaction) async {
+        var txIdsToRevoke = [tx.id]
+        var redemptionIdsToRevoke: [String] = []
+        var praiseNoteIdsToRevoke: [String] = []
+
+        // 1. 일일 스타 회수 시: 5일 올클리어 조건이 깨지므로 해당 주의 주간 보너스(+2⭐)도 연쇄 회수
+        if tx.kind == .dailyAllClear {
+            let bonusId = StarTransaction.weeklyBonusId(weekKey: tx.weekKey)
+            txIdsToRevoke.append(bonusId)
+        }
+
+        // 2. 보상 교환 트랜잭션 회수 시: 연결된 신청 건 및 하트 지급 내역도 회수
+        if let redemptionId = tx.linkedRedemptionId {
+            redemptionIdsToRevoke.append(redemptionId.uuidString)
+            praiseNoteIdsToRevoke.append(redemptionId.uuidString)
+        }
+
+        await revokeStarTransactionsAndRedemptions(
+            txIds: txIdsToRevoke,
+            redemptionIds: redemptionIdsToRevoke,
+            praiseNoteIds: praiseNoteIdsToRevoke
+        )
+        showToast("🗑️ [\(tx.title)] 스타 내역이 회수되었으며 아이 폰과 동기화됩니다.")
+    }
+
+    /// 부모폰과 아이 폰에 잘못 추가되어 남아있는 모든 스타 원장 내역을 영구 회수(초기화)합니다.
+    /// 로컬 트랜잭션뿐 아니라 원격 클라우드 스냅샷의 트랜잭션 ID까지 전부 수집하여 취소 목록(Tombstone)에 기록함으로써 아이 폰 잔류 스타를 완벽하게 제거합니다.
+    func resetAllStarTransactionsAndSync() async {
+        var allTxIds = Set(starTransactions.map(\.id))
+        var allRedemptionIds = Set(starRedemptionRequests.map { $0.id.uuidString })
+        var allPraiseIds = Set(starTransactions.compactMap { $0.linkedRedemptionId?.uuidString })
+
+        // 원격 최신 스냅샷에 남아있을 수 있는 고아 트랜잭션 ID들도 모두 수집 (아이 폰 잔류 스타 방지)
+        let cleanToken = vercelBlobToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanToken.isEmpty {
+            if let (latest, _) = try? await VercelBlobSyncService.shared.fetchLatestBlobMetadata(
+                token: cleanToken,
+                familyCode: familyCode
+            ), let latestBlob = latest {
+                if let remoteSnapshot = try? await VercelBlobSyncService.shared.downloadSnapshot(
+                    from: latestBlob.url,
+                    token: cleanToken
+                ) {
+                    for tx in remoteSnapshot.starTransactions {
+                        allTxIds.insert(tx.id)
+                        if let rId = tx.linkedRedemptionId {
+                            allRedemptionIds.insert(rId.uuidString)
+                            allPraiseIds.insert(rId.uuidString)
+                        }
+                    }
+                    for req in remoteSnapshot.starRedemptionRequests {
+                        allRedemptionIds.insert(req.id.uuidString)
+                    }
+                }
+            }
+        }
+
+        await revokeStarTransactionsAndRedemptions(
+            txIds: Array(allTxIds),
+            redemptionIds: Array(allRedemptionIds),
+            praiseNoteIds: Array(allPraiseIds)
+        )
+        showToast("🧹 모든 스타 기록이 초기화되었으며 아이 폰에서도 삭제됩니다.")
     }
 
     // MARK: - ⭐ 스타 보상 프리셋 관리 (추가, 삭제, 기본값 복원)

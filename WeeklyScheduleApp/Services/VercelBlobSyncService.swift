@@ -65,9 +65,11 @@ final class VercelBlobSyncService {
         guard var components = URLComponents(string: "https://blob.vercel-storage.com") else {
             throw VercelBlobSyncError.invalidURL
         }
+        let cacheBuster = String(Int64(Date().timeIntervalSince1970 * 1000))
         components.queryItems = [
             URLQueryItem(name: "prefix", value: prefix),
-            URLQueryItem(name: "limit", value: "100")
+            URLQueryItem(name: "limit", value: "100"),
+            URLQueryItem(name: "_t", value: cacheBuster)
         ]
         guard let url = components.url else { throw VercelBlobSyncError.invalidURL }
 
@@ -75,6 +77,7 @@ final class VercelBlobSyncService {
         request.httpMethod = "GET"
         request.setValue("Bearer \(cleanToken)", forHTTPHeaderField: "Authorization")
         request.setValue("7", forHTTPHeaderField: "x-api-version")
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
 
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response, data: data)
@@ -195,8 +198,10 @@ final class VercelBlobSyncService {
     private func validateHTTPResponse(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { return }
         guard (200...299).contains(http.statusCode) else {
-            let bodyText = String(data: data, encoding: .utf8) ?? "알 수 없는 오류"
-            throw VercelBlobSyncError.httpError(statusCode: http.statusCode, message: bodyText)
+            let serverMessage = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String
+                ?? String(data: data, encoding: .utf8)
+                ?? "알 수 없는 오류"
+            throw VercelBlobSyncError.httpError(statusCode: http.statusCode, message: serverMessage)
         }
     }
 }

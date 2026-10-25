@@ -754,6 +754,18 @@ struct StarRewardShopSheet: View {
                         } label: {
                             Label("기본 보상으로 초기화", systemImage: "arrow.counterclockwise")
                         }
+
+                        Divider()
+
+                        Button(role: .destructive) {
+                            authenticateParent(reason: "잘못 추가된 모든 스타 기록을 초기화하고 아이 폰과 동기화할까요?") {
+                                Task {
+                                    await store.resetAllStarTransactionsAndSync()
+                                }
+                            }
+                        } label: {
+                            Label("잘못 추가된 스타 모두 초기화 (아이 폰 동기화)", systemImage: "trash.circle")
+                        }
                     } label: {
                         Label("보상 관리", systemImage: "slider.horizontal.3")
                     }
@@ -1204,10 +1216,38 @@ struct StarRewardShopSheet: View {
                         Text(tx.delta > 0 ? "+\(tx.delta)⭐" : "\(tx.delta)⭐")
                             .font(.subheadline.weight(.heavy))
                             .foregroundStyle(tx.delta > 0 ? Color.orange : Color.pink)
+
+                        Button {
+                            authenticateParent(reason: "[\(tx.title)] 스타 내역을 영구 회수(삭제)하고 아이 폰과 동기화할까요?") {
+                                Task {
+                                    await store.revokeStarTransaction(tx)
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Color.secondary)
+                                .padding(7)
+                                .background(Color(.tertiarySystemFill))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("스타 내역 삭제")
                     }
                     .padding(12)
                     .background(Color(.secondarySystemGroupedBackground))
                     .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            authenticateParent(reason: "[\(tx.title)] 스타 내역을 영구 회수(삭제)하고 아이 폰과 동기화할까요?") {
+                                Task {
+                                    await store.revokeStarTransaction(tx)
+                                }
+                            }
+                        } label: {
+                            Label("이 스타 내역 회수/삭제", systemImage: "trash")
+                        }
+                    }
                 }
             }
         }
