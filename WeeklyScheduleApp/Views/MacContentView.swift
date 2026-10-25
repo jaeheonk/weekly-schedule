@@ -4,6 +4,7 @@ import SwiftUI
 enum MacNavigationItem: String, CaseIterable, Identifiable, Hashable {
     case weeklyGrid = "weeklyGrid"
     case todaySchedule = "todaySchedule"
+    case bookshelf = "bookshelf"
     case history = "history"
     case printPreview = "printPreview"
     case syncAndSettings = "syncAndSettings"
@@ -14,6 +15,7 @@ enum MacNavigationItem: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .weeklyGrid: return "주간 시간표"
         case .todaySchedule: return "오늘의 스케줄"
+        case .bookshelf: return "책장"
         case .history: return "지난 일정 기록"
         case .printPreview: return "1페이지 인쇄·PDF"
         case .syncAndSettings: return "동기화·설정"
@@ -24,6 +26,7 @@ enum MacNavigationItem: String, CaseIterable, Identifiable, Hashable {
         switch self {
         case .weeklyGrid: return "calendar"
         case .todaySchedule: return "checklist.checked"
+        case .bookshelf: return "books.vertical.fill"
         case .history: return "clock.arrow.circlepath"
         case .printPreview: return "printer.fill"
         case .syncAndSettings: return "cloud.fill"
@@ -291,6 +294,7 @@ struct MacContentView: View {
         switch item {
         case .weeklyGrid: return .blue
         case .todaySchedule: return .green
+        case .bookshelf: return .indigo
         case .history: return .teal
         case .printPreview: return .purple
         case .syncAndSettings: return .orange
@@ -368,6 +372,8 @@ struct MacContentView: View {
             WeeklyGridView()
         case .todaySchedule:
             TodayScheduleView()
+        case .bookshelf:
+            BookshelfWebView()
         case .history:
             MacScheduleHistoryView()
         case .printPreview:

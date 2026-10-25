@@ -11,6 +11,20 @@
 		1901FEE2A28DC6972CB6E976 /* ScheduleEditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9F9CC73092097BED8F570BA /* ScheduleEditSheet.swift */; };
 		194B1A6E308C93DE00CB4E11 /* StarRewardShopSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 194B1A6D308C93DE00CB4E11 /* StarRewardShopSheet.swift */; };
 		194B1A6F308C93DE00CB4E11 /* StarRewardShopSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 194B1A6D308C93DE00CB4E11 /* StarRewardShopSheet.swift */; };
+		1977AA013090000100AA0001 /* ScheduleWidgetDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA003090000100AA0001 /* ScheduleWidgetDataManager.swift */; };
+		1977AA023090000100AA0001 /* ScheduleWidgetDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA003090000100AA0001 /* ScheduleWidgetDataManager.swift */; };
+		1977AA033090000100AA0001 /* ScheduleWidgetDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA003090000100AA0001 /* ScheduleWidgetDataManager.swift */; };
+		1977AA053090000100AA0001 /* CompleteScheduleItemIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA043090000100AA0001 /* CompleteScheduleItemIntent.swift */; };
+		1977AA063090000100AA0001 /* CompleteScheduleItemIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA043090000100AA0001 /* CompleteScheduleItemIntent.swift */; };
+		1977AA073090000100AA0001 /* CompleteScheduleItemIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA043090000100AA0001 /* CompleteScheduleItemIntent.swift */; };
+		1977AA093090000100AA0001 /* WeeklyScheduleWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA083090000100AA0001 /* WeeklyScheduleWidget.swift */; };
+		1977AA0B3090000100AA0001 /* ScheduleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 065C8DBE2BC1F85FCD52C4C5 /* ScheduleModels.swift */; };
+		1977AA0C3090000100AA0001 /* DefaultScheduleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA3F0433F8B109686FA6B62B /* DefaultScheduleData.swift */; };
+		1977AA0D3090000100AA0001 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CA4D83E01D8EACE20423446 /* KeychainHelper.swift */; };
+		1977AA0E3090000100AA0001 /* VercelBlobSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 295E4B8977B506E1D5D511AE /* VercelBlobSyncService.swift */; };
+		1977AA103090000100AA0001 /* WeeklyScheduleWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1977AA0F3090000100AA0001 /* WeeklyScheduleWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		19D26AE9308DD923007DC2C3 /* BookshelfWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D26AE8308DD923007DC2C3 /* BookshelfWebView.swift */; };
+		19D26AEA308DD923007DC2C3 /* BookshelfWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D26AE8308DD923007DC2C3 /* BookshelfWebView.swift */; };
 		19D5D0F430843DE10087B5CA /* RewardExchangeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D5D0F330843DE10087B5CA /* RewardExchangeSheet.swift */; };
 		19D5D0F530843DE10087B5CA /* RewardExchangeSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D5D0F330843DE10087B5CA /* RewardExchangeSheet.swift */; };
 		19D5D0F830844A230087B5CA /* BackgroundRefreshManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19D5D0F730844A230087B5CA /* BackgroundRefreshManager.swift */; };
@@ -53,18 +67,6 @@
 		FAC02A1E20AAFEF5DCB56FAD /* ClockAlarmOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090CDCC5E0839346877E5561 /* ClockAlarmOverlayView.swift */; };
 		FF606DDDC9836A680349EA7F /* ScheduleStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE17C14D633688EE3167310C /* ScheduleStore.swift */; };
 		FF7F5B7C101CC51AA3E486BD /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CA4D83E01D8EACE20423446 /* KeychainHelper.swift */; };
-		1977AA013090000100AA0001 /* ScheduleWidgetDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA003090000100AA0001 /* ScheduleWidgetDataManager.swift */; };
-		1977AA023090000100AA0001 /* ScheduleWidgetDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA003090000100AA0001 /* ScheduleWidgetDataManager.swift */; };
-		1977AA033090000100AA0001 /* ScheduleWidgetDataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA003090000100AA0001 /* ScheduleWidgetDataManager.swift */; };
-		1977AA053090000100AA0001 /* CompleteScheduleItemIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA043090000100AA0001 /* CompleteScheduleItemIntent.swift */; };
-		1977AA063090000100AA0001 /* CompleteScheduleItemIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA043090000100AA0001 /* CompleteScheduleItemIntent.swift */; };
-		1977AA073090000100AA0001 /* CompleteScheduleItemIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA043090000100AA0001 /* CompleteScheduleItemIntent.swift */; };
-		1977AA093090000100AA0001 /* WeeklyScheduleWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1977AA083090000100AA0001 /* WeeklyScheduleWidget.swift */; };
-		1977AA0B3090000100AA0001 /* ScheduleModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 065C8DBE2BC1F85FCD52C4C5 /* ScheduleModels.swift */; };
-		1977AA0C3090000100AA0001 /* DefaultScheduleData.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA3F0433F8B109686FA6B62B /* DefaultScheduleData.swift */; };
-		1977AA0D3090000100AA0001 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CA4D83E01D8EACE20423446 /* KeychainHelper.swift */; };
-		1977AA0E3090000100AA0001 /* VercelBlobSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 295E4B8977B506E1D5D511AE /* VercelBlobSyncService.swift */; };
-		1977AA103090000100AA0001 /* WeeklyScheduleWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 1977AA0F3090000100AA0001 /* WeeklyScheduleWidgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -98,6 +100,12 @@
 		090CDCC5E0839346877E5561 /* ClockAlarmOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockAlarmOverlayView.swift; sourceTree = "<group>"; };
 		15E144D7829B4784E0593EA8 /* WeeklyGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyGridView.swift; sourceTree = "<group>"; };
 		194B1A6D308C93DE00CB4E11 /* StarRewardShopSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StarRewardShopSheet.swift; sourceTree = "<group>"; };
+		1977AA003090000100AA0001 /* ScheduleWidgetDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleWidgetDataManager.swift; sourceTree = "<group>"; };
+		1977AA043090000100AA0001 /* CompleteScheduleItemIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompleteScheduleItemIntent.swift; sourceTree = "<group>"; };
+		1977AA083090000100AA0001 /* WeeklyScheduleWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyScheduleWidget.swift; sourceTree = "<group>"; };
+		1977AA0A3090000100AA0001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		1977AA0F3090000100AA0001 /* WeeklyScheduleWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = WeeklyScheduleWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		19D26AE8308DD923007DC2C3 /* BookshelfWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookshelfWebView.swift; sourceTree = "<group>"; };
 		19D5D0F330843DE10087B5CA /* RewardExchangeSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RewardExchangeSheet.swift; sourceTree = "<group>"; };
 		19D5D0F630844A0E0087B5CA /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		19D5D0F730844A230087B5CA /* BackgroundRefreshManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshManager.swift; sourceTree = "<group>"; };
@@ -118,14 +126,18 @@
 		D9F9CC73092097BED8F570BA /* ScheduleEditSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleEditSheet.swift; sourceTree = "<group>"; };
 		DE17C14D633688EE3167310C /* ScheduleStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleStore.swift; sourceTree = "<group>"; };
 		EF561CE31F3979E35E255D20 /* SchedulePrintPreviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SchedulePrintPreviewSheet.swift; sourceTree = "<group>"; };
-		1977AA003090000100AA0001 /* ScheduleWidgetDataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleWidgetDataManager.swift; sourceTree = "<group>"; };
-		1977AA043090000100AA0001 /* CompleteScheduleItemIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompleteScheduleItemIntent.swift; sourceTree = "<group>"; };
-		1977AA083090000100AA0001 /* WeeklyScheduleWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WeeklyScheduleWidget.swift; sourceTree = "<group>"; };
-		1977AA0A3090000100AA0001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		1977AA0F3090000100AA0001 /* WeeklyScheduleWidgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = WeeklyScheduleWidgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		1977AA153090000100AA0001 /* WeeklyScheduleWidget */ = {
+			isa = PBXGroup;
+			children = (
+				1977AA0A3090000100AA0001 /* Info.plist */,
+				1977AA083090000100AA0001 /* WeeklyScheduleWidget.swift */,
+			);
+			path = WeeklyScheduleWidget;
+			sourceTree = "<group>";
+		};
 		B3C1FFAD827FB9D63B23EBEE /* WeeklyScheduleApp */ = {
 			isa = PBXGroup;
 			children = (
@@ -180,6 +192,7 @@
 				15E144D7829B4784E0593EA8 /* WeeklyGridView.swift */,
 				19D5D0F330843DE10087B5CA /* RewardExchangeSheet.swift */,
 				194B1A6D308C93DE00CB4E11 /* StarRewardShopSheet.swift */,
+				19D26AE8308DD923007DC2C3 /* BookshelfWebView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -201,15 +214,6 @@
 			path = Models;
 			sourceTree = "<group>";
 		};
-		1977AA153090000100AA0001 /* WeeklyScheduleWidget */ = {
-			isa = PBXGroup;
-			children = (
-				1977AA0A3090000100AA0001 /* Info.plist */,
-				1977AA083090000100AA0001 /* WeeklyScheduleWidget.swift */,
-			);
-			path = WeeklyScheduleWidget;
-			sourceTree = "<group>";
-		};
 		F3999CC34D9AB23FCFA97A4C = {
 			isa = PBXGroup;
 			children = (
@@ -222,6 +226,24 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		1977AA133090000100AA0001 /* WeeklyScheduleWidgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1977AA183090000100AA0001 /* Build configuration list for PBXNativeTarget "WeeklyScheduleWidgetExtension" */;
+			buildPhases = (
+				1977AA163090000100AA0001 /* Sources */,
+				1977AA173090000100AA0001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = WeeklyScheduleWidgetExtension;
+			packageProductDependencies = (
+			);
+			productName = WeeklyScheduleWidgetExtension;
+			productReference = 1977AA0F3090000100AA0001 /* WeeklyScheduleWidgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		8FAA9EADE2C42EFA5ACAF87D /* WeeklyScheduleApp */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = F2B0481A3065D6B8B6ABF996 /* Build configuration list for PBXNativeTarget "WeeklyScheduleApp" */;
@@ -260,24 +282,6 @@
 			productReference = 05AE538F5FA43350C5732FB3 /* WeeklyScheduleMac.app */;
 			productType = "com.apple.product-type.application";
 		};
-		1977AA133090000100AA0001 /* WeeklyScheduleWidgetExtension */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 1977AA183090000100AA0001 /* Build configuration list for PBXNativeTarget "WeeklyScheduleWidgetExtension" */;
-			buildPhases = (
-				1977AA163090000100AA0001 /* Sources */,
-				1977AA173090000100AA0001 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = WeeklyScheduleWidgetExtension;
-			packageProductDependencies = (
-			);
-			productName = WeeklyScheduleWidgetExtension;
-			productReference = 1977AA0F3090000100AA0001 /* WeeklyScheduleWidgetExtension.appex */;
-			productType = "com.apple.product-type.app-extension";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -309,6 +313,13 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		1977AA173090000100AA0001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		47905B3A116AD1B336F6A67F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -325,16 +336,23 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		1977AA173090000100AA0001 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		1977AA163090000100AA0001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1977AA093090000100AA0001 /* WeeklyScheduleWidget.swift in Sources */,
+				1977AA0B3090000100AA0001 /* ScheduleModels.swift in Sources */,
+				1977AA0C3090000100AA0001 /* DefaultScheduleData.swift in Sources */,
+				1977AA0D3090000100AA0001 /* KeychainHelper.swift in Sources */,
+				1977AA0E3090000100AA0001 /* VercelBlobSyncService.swift in Sources */,
+				1977AA033090000100AA0001 /* ScheduleWidgetDataManager.swift in Sources */,
+				1977AA073090000100AA0001 /* CompleteScheduleItemIntent.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		632EA48B3544DF554D706A9F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -344,6 +362,7 @@
 				5F7CFB9632B856BB8F901D2F /* ContentView.swift in Sources */,
 				D554314A5A8891B2F170CC61 /* DefaultScheduleData.swift in Sources */,
 				19D5D0F830844A230087B5CA /* BackgroundRefreshManager.swift in Sources */,
+				19D26AE9308DD923007DC2C3 /* BookshelfWebView.swift in Sources */,
 				FF7F5B7C101CC51AA3E486BD /* KeychainHelper.swift in Sources */,
 				6D5F95BC7A99EBF247DA114F /* MacContentView.swift in Sources */,
 				40975CB8AFAEC821D6E1EDC9 /* NotificationManager.swift in Sources */,
@@ -375,6 +394,7 @@
 				C19D1573F1B621A883AEE58F /* ContentView.swift in Sources */,
 				D4917EFE6AD4AFB3BB4E599E /* DefaultScheduleData.swift in Sources */,
 				19D5D0F930844A230087B5CA /* BackgroundRefreshManager.swift in Sources */,
+				19D26AEA308DD923007DC2C3 /* BookshelfWebView.swift in Sources */,
 				36E29D14D73D314523E4C204 /* KeychainHelper.swift in Sources */,
 				BC79CB945957CC85EA9402C4 /* MacContentView.swift in Sources */,
 				AC8FF89410DB9F62339152D2 /* NotificationManager.swift in Sources */,
@@ -394,20 +414,6 @@
 				1977AA063090000100AA0001 /* CompleteScheduleItemIntent.swift in Sources */,
 				6137038231DEE0B280471513 /* WeeklyGridView.swift in Sources */,
 				EF86AE4ACC4423202ABB160F /* WeeklyScheduleApp.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		1977AA163090000100AA0001 /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				1977AA093090000100AA0001 /* WeeklyScheduleWidget.swift in Sources */,
-				1977AA0B3090000100AA0001 /* ScheduleModels.swift in Sources */,
-				1977AA0C3090000100AA0001 /* DefaultScheduleData.swift in Sources */,
-				1977AA0D3090000100AA0001 /* KeychainHelper.swift in Sources */,
-				1977AA0E3090000100AA0001 /* VercelBlobSyncService.swift in Sources */,
-				1977AA033090000100AA0001 /* ScheduleWidgetDataManager.swift in Sources */,
-				1977AA073090000100AA0001 /* CompleteScheduleItemIntent.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -441,6 +447,60 @@
 				MARKETING_VERSION = 1.0.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.jae.weeklyschedule.mac;
 				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		1977AA193090000100AA0001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = T2RFQAB598;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = WeeklyScheduleWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "오늘의 할 일 위젯";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jae.weeklyschedule.app.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		1977AA1A3090000100AA0001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = T2RFQAB598;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = WeeklyScheduleWidget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "오늘의 할 일 위젯";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.jae.weeklyschedule.app.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};
@@ -641,63 +701,18 @@
 			};
 			name = Debug;
 		};
-		1977AA193090000100AA0001 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
-				DEVELOPMENT_TEAM = T2RFQAB598;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = WeeklyScheduleWidget/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "오늘의 할 일 위젯";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 1.0.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.jae.weeklyschedule.app.widget;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SKIP_INSTALL = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
-		1977AA1A3090000100AA0001 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 3;
-				DEVELOPMENT_TEAM = T2RFQAB598;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = WeeklyScheduleWidget/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "오늘의 할 일 위젯";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 1.0.2;
-				PRODUCT_BUNDLE_IDENTIFIER = com.jae.weeklyschedule.app.widget;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SKIP_INSTALL = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		1977AA183090000100AA0001 /* Build configuration list for PBXNativeTarget "WeeklyScheduleWidgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1977AA193090000100AA0001 /* Debug */,
+				1977AA1A3090000100AA0001 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		D3767E159048DDDE9078D19D /* Build configuration list for PBXNativeTarget "WeeklyScheduleMac" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -721,15 +736,6 @@
 			buildConfigurations = (
 				B4E2030E5D53E685277E418D /* Debug */,
 				5E0E10A1D3D19535071CE24D /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Debug;
-		};
-		1977AA183090000100AA0001 /* Build configuration list for PBXNativeTarget "WeeklyScheduleWidgetExtension" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				1977AA193090000100AA0001 /* Debug */,
-				1977AA1A3090000100AA0001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
