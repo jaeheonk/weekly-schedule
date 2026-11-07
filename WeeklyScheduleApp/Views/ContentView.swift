@@ -27,11 +27,17 @@ struct ContentView: View {
                     }
                     .tag(2)
 
+                NaverDictWebView()
+                    .tabItem {
+                        Label("사전", systemImage: "character.book.closed.fill")
+                    }
+                    .tag(3)
+
                 NotificationSettingsView()
                     .tabItem {
                         Label("동기화·알림", systemImage: "alarm.waves.left.and.right.fill")
                     }
-                    .tag(3)
+                    .tag(4)
             }
             .tint(Color(red: 0.25, green: 0.42, blue: 0.95))
 

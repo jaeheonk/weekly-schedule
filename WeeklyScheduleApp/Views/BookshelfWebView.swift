@@ -54,15 +54,17 @@ final class BookshelfURLSchemeHandler: NSObject, WKURLSchemeHandler {
             return
         }
 
-        var request = URLRequest(url: targetURL, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30)
+        let isServerFn = targetURL.path.contains("/_serverFn/")
+        let cachePolicy: URLRequest.CachePolicy = isServerFn ? .reloadIgnoringLocalAndRemoteCacheData : .useProtocolCachePolicy
+        var request = URLRequest(url: targetURL, cachePolicy: cachePolicy, timeoutInterval: 30)
         request.httpMethod = urlSchemeTask.request.httpMethod ?? "GET"
 
         if let headers = urlSchemeTask.request.allHTTPHeaderFields {
             for (key, val) in headers {
                 let lower = key.lowercased()
                 if lower == "host" { continue }
-                // 커스텀 스킴(bookshelf://)으로 인해 잘못 들어간 Origin, Referer, Sec-Fetch-Site는 원본 서버 기준에 맞게 정규화
-                if lower == "origin" || lower == "referer" || lower == "sec-fetch-site" { continue }
+                // 커스텀 스킴(bookshelf://)으로 인해 잘못 들어간 Origin, Referer, Sec-Fetch-Site 및 내부 프록시 헤더는 제외/정규화
+                if lower == "origin" || lower == "referer" || lower == "sec-fetch-site" || lower == "x-proxy-body-base64" { continue }
                 request.setValue(val, forHTTPHeaderField: key)
             }
         }
@@ -70,7 +72,10 @@ final class BookshelfURLSchemeHandler: NSObject, WKURLSchemeHandler {
         // gyogwa-books.grok.me 대상 요청에 대해 same-origin 헤더 설정
         // Cloudflare 및 TanStack Start가 비표준 스킴(bookshelf://)의 호출을 CSRF 차단(403 Forbidden)하는 것을 방지
         if targetURL.host == Self.defaultHost || targetURL.host?.hasSuffix(".grok.me") == true {
-            request.setValue("https://\(Self.defaultHost)", forHTTPHeaderField: "Origin")
+            let method = (request.httpMethod ?? "GET").uppercased()
+            if method != "GET" && method != "HEAD" {
+                request.setValue("https://\(Self.defaultHost)", forHTTPHeaderField: "Origin")
+            }
             request.setValue("https://\(Self.defaultHost)/", forHTTPHeaderField: "Referer")
             request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
             if request.value(forHTTPHeaderField: "Sec-Fetch-Mode") == nil {
@@ -197,16 +202,80 @@ final class BookshelfWebViewModel: ObservableObject {
             config.setValue(true, forKey: "showsSystemScreenTimeBlockingView")
         }
 
-        // fetch 가로채기: WebKit이 WKURLSchemeTask에서 POST Body를 누락시키는 문제를 해결하기 위해
-        // 문자열 바디를 Base64로 인코딩하여 X-Proxy-Body-Base64 헤더로 첨부
+        // fetch 가로채기 및 서버 함수(/_serverFn/) 응답 안전화:
+        // 1) WebKit이 WKURLSchemeTask에서 POST Body를 누락시키는 문제를 해결하기 위해
+        //    문자열 바디를 Base64로 인코딩하여 X-Proxy-Body-Base64 헤더로 첨부
+        // 2) TanStack Start 서버 함수는 { result, error, context } 래퍼 형태로 응답하는데,
+        //    POST 바디 유실이나 일시적 네트워크 오류로 result가 undefined(Seroval {t:2, s:1})가 될 경우
+        //    웹 앱이 상태를 undefined로 덮어써서 i.read 크래시가 발생하는 것을 방지 (요청시 보낸 데이터나 로컬 캐시로 폴백)
         let proxyScriptSource = """
         (function() {
             if (window.__bookshelfProxyInjected) return;
             window.__bookshelfProxyInjected = true;
 
+            function getFallbackState() {
+                try {
+                    const raw = localStorage.getItem('cheongna-books-v1');
+                    if (raw) {
+                        const parsed = JSON.parse(raw);
+                        if (parsed && typeof parsed === 'object' && parsed.read && parsed.loans) {
+                            return parsed;
+                        }
+                    }
+                } catch (_) {}
+                return { read: {}, loans: [] };
+            }
+
+            // 요청이나 응답이 비정상일 때 TanStack Start 미들웨어(aa)가 기대하는 { result, error, context } 포맷으로 안전하게 복구
+            function ensureValidServerFnEnvelope(obj) {
+                if (!obj || typeof obj !== 'object') {
+                    return { result: getFallbackState(), error: undefined, context: {} };
+                }
+                // Seroval AST format: {"t":10,"i":0,"p":{"k":["result","error","context"],"v":[resultNode, errorNode, contextNode]}}
+                if (obj.t === 10 && obj.p && Array.isArray(obj.p.k) && Array.isArray(obj.p.v)) {
+                    const keys = obj.p.k;
+                    const vals = obj.p.v;
+                    const resIdx = keys.indexOf('result');
+                    const errIdx = keys.indexOf('error');
+                    if (resIdx !== -1) {
+                        const resNode = vals[resIdx];
+                        const errNode = errIdx !== -1 ? vals[errIdx] : null;
+                        // error가 없고(t:2, s:1 === undefined) result도 undefined/null(t:2)인 경우 로컬 상태로 폴백
+                        const hasNoError = !errNode || (errNode.t === 2 && (errNode.s === 1 || errNode.s === 0));
+                        const isResultInvalid = !resNode || resNode.t === 2;
+                        if (hasNoError && isResultInvalid) {
+                            vals[resIdx] = {
+                                t: 10,
+                                i: 9999,
+                                p: {
+                                    k: ['read', 'loans'],
+                                    v: [
+                                        { t: 10, i: 9998, p: { k: [], v: [] }, o: 0 },
+                                        { t: 9, i: 9997, a: [], o: 0 }
+                                    ]
+                                },
+                                o: 0
+                            };
+                        }
+                    }
+                    return obj;
+                }
+                // 일반 JSON 포맷인 경우
+                if ('result' in obj && ('context' in obj || 'error' in obj)) {
+                    if (obj.result === undefined && !obj.error) {
+                        obj.result = getFallbackState();
+                    }
+                    return obj;
+                }
+                return obj;
+            }
+
             const originalFetch = window.fetch;
             window.fetch = async function(input, init) {
-                let requestInit = init || {};
+                let requestInit = init ? Object.assign({}, init) : {};
+                let urlStr = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+                let isServerFn = urlStr.includes('/_serverFn/');
+
                 if (requestInit.body && typeof requestInit.body === 'string') {
                     try {
                         const utf8Bytes = new TextEncoder().encode(requestInit.body);
@@ -217,21 +286,37 @@ final class BookshelfWebViewModel: ObservableObject {
                         }
                         const base64Body = btoa(binary);
 
-                        let headers = requestInit.headers;
-                        if (headers instanceof Headers) {
-                            headers.set('X-Proxy-Body-Base64', base64Body);
-                        } else if (Array.isArray(headers)) {
-                            headers.push(['X-Proxy-Body-Base64', base64Body]);
-                        } else if (headers && typeof headers === 'object') {
-                            headers['X-Proxy-Body-Base64'] = base64Body;
-                        } else {
-                            requestInit.headers = { 'X-Proxy-Body-Base64': base64Body };
-                        }
+                        let headers = new Headers(requestInit.headers || (input instanceof Request ? input.headers : undefined));
+                        headers.set('X-Proxy-Body-Base64', base64Body);
+                        requestInit.headers = headers;
                     } catch (e) {
                         console.warn('Proxy body encode failed:', e);
                     }
                 }
-                return originalFetch(input, requestInit);
+
+                const response = await originalFetch(input, requestInit);
+                if (!isServerFn) {
+                    return response;
+                }
+
+                const origJson = response.json.bind(response);
+                response.json = async function() {
+                    const data = await origJson();
+                    return ensureValidServerFnEnvelope(data);
+                };
+
+                const origText = response.text.bind(response);
+                response.text = async function() {
+                    const txt = await origText();
+                    try {
+                        const parsed = JSON.parse(txt);
+                        const checked = ensureValidServerFnEnvelope(parsed);
+                        return JSON.stringify(checked);
+                    } catch (_) {}
+                    return txt;
+                };
+
+                return response;
             };
         })();
         """

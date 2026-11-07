@@ -56,7 +56,7 @@ struct TodayTasksTimelineProvider: TimelineProvider {
     }
 }
 
-// MARK: - Widget View (Apple 미리알림 스타일 '오늘의 할 일' 인터랙티브 위젯)
+// MARK: - Widget View (Apple 미리알림 스타일 '오늘의 할 일' 인터랙티브 위젯: 1x1, 2x1, 2x2 크기 지원)
 
 struct TodayTasksWidgetEntryView: View {
     var entry: TodayTasksWidgetEntry
@@ -67,6 +67,8 @@ struct TodayTasksWidgetEntryView: View {
         switch family {
         case .systemLarge:
             return 7
+        case .systemSmall:
+            return 2
         default:
             return 3
         }
@@ -80,8 +82,19 @@ struct TodayTasksWidgetEntryView: View {
         max(0, entry.summary.incompleteItems.count - visibleItems.count)
     }
 
+    private var contentSpacing: CGFloat {
+        switch family {
+        case .systemLarge:
+            return 10
+        case .systemSmall:
+            return 5
+        default:
+            return 7
+        }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: family == .systemLarge ? 10 : 7) {
+        VStack(alignment: .leading, spacing: contentSpacing) {
             headerView
 
             Divider()
@@ -112,7 +125,57 @@ struct TodayTasksWidgetEntryView: View {
 
     // MARK: - Header
 
+    @ViewBuilder
     private var headerView: some View {
+        if family == .systemSmall {
+            smallHeaderView
+        } else {
+            regularHeaderView
+        }
+    }
+
+    /// 1x1 (Small) 전용 컴팩트 헤더
+    private var smallHeaderView: some View {
+        HStack(alignment: .center, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text("\(entry.summary.remainingIncompleteCount)")
+                    .font(.system(size: 20, weight: .heavy, design: .rounded))
+                    .foregroundStyle(
+                        entry.summary.remainingIncompleteCount == 0
+                            ? Color.green
+                            : theme.accentIndigo
+                    )
+                    .contentTransition(.numericText())
+
+                Text("할 일")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.primary)
+            }
+
+            Spacer(minLength: 2)
+
+            HStack(spacing: 3) {
+                Text(entry.summary.weekday.fullName)
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(theme.accentIndigo)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(theme.weekdayBadgeBackground, in: Capsule())
+
+                if entry.summary.totalCheckableCount > 0 {
+                    Text("\(entry.summary.completedCheckableCount)/\(entry.summary.totalCheckableCount)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.secondary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(theme.secondaryBadgeBackground, in: Capsule())
+                }
+            }
+        }
+    }
+
+    /// 2x1 (Medium) 및 2x2 (Large) 헤더
+    private var regularHeaderView: some View {
         HStack(alignment: .center, spacing: 8) {
             // 남은 할 일 개수 배지 (미리알림 스타일)
             HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -155,27 +218,117 @@ struct TodayTasksWidgetEntryView: View {
 
     // MARK: - Interactive Task List
 
+    private var taskListSpacing: CGFloat {
+        switch family {
+        case .systemLarge:
+            return 8
+        case .systemSmall:
+            return 5
+        default:
+            return 6
+        }
+    }
+
     private var taskListView: some View {
-        VStack(alignment: .leading, spacing: family == .systemLarge ? 8 : 6) {
+        VStack(alignment: .leading, spacing: taskListSpacing) {
             ForEach(visibleItems) { item in
-                taskRow(for: item)
+                if family == .systemSmall {
+                    smallTaskRow(for: item)
+                } else {
+                    regularTaskRow(for: item)
+                }
             }
 
             if overflowCount > 0 {
-                HStack(spacing: 4) {
-                    Image(systemName: "ellipsis.circle.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("외 \(overflowCount)개의 할 일이 더 있어요")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
-                }
-                .foregroundStyle(Color.secondary)
-                .padding(.leading, 26)
-                .padding(.top, 1)
+                overflowIndicator
             }
         }
     }
 
-    private func taskRow(for item: WidgetTaskItem) -> some View {
+    @ViewBuilder
+    private var overflowIndicator: some View {
+        if family == .systemSmall {
+            HStack(spacing: 3) {
+                Image(systemName: "ellipsis.circle.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("외 \(overflowCount)개 더")
+                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+            }
+            .foregroundStyle(Color.secondary)
+            .padding(.leading, 24)
+            .padding(.top, 1)
+        } else {
+            HStack(spacing: 4) {
+                Image(systemName: "ellipsis.circle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("외 \(overflowCount)개의 할 일이 더 있어요")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+            }
+            .foregroundStyle(Color.secondary)
+            .padding(.leading, 26)
+            .padding(.top, 1)
+        }
+    }
+
+    /// 1x1 (Small) 전용 할 일 행: 좁은 너비에서도 제목과 시작 시각이 겹치거나 잘리지 않도록 2줄 정렬
+    private func smallTaskRow(for item: WidgetTaskItem) -> some View {
+        let categoryColor = theme.adaptiveCategoryColor(for: item.category)
+
+        return HStack(alignment: .center, spacing: 6) {
+            // 원형 인터랙티브 체크 버튼 (탭 즉시 '다 했어요' 완료 처리)
+            Button(
+                intent: CompleteScheduleItemIntent(
+                    itemId: item.id.uuidString,
+                    weekKey: entry.summary.weekKey
+                )
+            ) {
+                ZStack {
+                    Circle()
+                        .strokeBorder(categoryColor, lineWidth: 1.8)
+                        .frame(width: 18, height: 18)
+                    Circle()
+                        .fill(categoryColor.opacity(theme.categoryFillOpacity))
+                        .frame(width: 12, height: 12)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // 제목 + (시각 / 세부 태스크 배지)
+            VStack(alignment: .leading, spacing: 1.5) {
+                HStack(spacing: 3.5) {
+                    Circle()
+                        .fill(categoryColor)
+                        .frame(width: 5, height: 5)
+
+                    Text(item.title)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                }
+
+                HStack(spacing: 4) {
+                    Text(item.startTimeHHmm)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Color.secondary)
+
+                    if item.subTaskCount > 0 {
+                        Text("세부 \(item.subTaskCount)")
+                            .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(categoryColor)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 0.5)
+                            .background(categoryColor.opacity(theme.categoryBadgeOpacity), in: Capsule())
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// 2x1 (Medium) 및 2x2 (Large) 할 일 행
+    private func regularTaskRow(for item: WidgetTaskItem) -> some View {
         let categoryColor = theme.adaptiveCategoryColor(for: item.category)
 
         return HStack(spacing: 8) {
@@ -233,41 +386,81 @@ struct TodayTasksWidgetEntryView: View {
 
     // MARK: - Empty / All-Completed States
 
+    @ViewBuilder
     private var allCompletedPlaceholder: some View {
-        VStack(spacing: 6) {
-            Spacer(minLength: 0)
-            HStack(spacing: 8) {
+        if family == .systemSmall {
+            VStack(spacing: 4) {
+                Spacer(minLength: 0)
                 Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 24, weight: .bold))
+                    .font(.system(size: 26, weight: .bold))
                     .foregroundStyle(Color.green)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("오늘 할 일을 모두 끝냈어요! 🎉")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.primary)
-                    Text("총 \(entry.summary.totalCheckableCount)개의 오늘 할 일 체크 완료")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(Color.secondary)
-                }
+                Text("모두 완료! 🎉")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.primary)
+
+                Text("\(entry.summary.totalCheckableCount)개 완료")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(Color.secondary)
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, alignment: .center)
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        } else {
+            VStack(spacing: 6) {
+                Spacer(minLength: 0)
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.seal.fill")
+                        .font(.system(size: 24, weight: .bold))
+                        .foregroundStyle(Color.green)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("오늘 할 일을 모두 끝냈어요! 🎉")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .foregroundStyle(Color.primary)
+                        Text("총 \(entry.summary.totalCheckableCount)개의 오늘 할 일 체크 완료")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(Color.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                Spacer(minLength: 0)
+            }
         }
     }
 
+    @ViewBuilder
     private var emptySchedulePlaceholder: some View {
-        VStack(spacing: 6) {
-            Spacer(minLength: 0)
-            HStack(spacing: 8) {
+        if family == .systemSmall {
+            VStack(spacing: 4) {
+                Spacer(minLength: 0)
                 Image(systemName: "sparkles")
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.system(size: 22, weight: .semibold))
                     .foregroundStyle(theme.accentIndigo)
-                Text("오늘 등록된 체크 할 일이 없어요")
-                    .font(.system(size: 13, weight: .semibold, design: .rounded))
+
+                Text("할 일 없음")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.primary)
+
+                Text("오늘 일정이 없어요")
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(Color.secondary)
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, alignment: .center)
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        } else {
+            VStack(spacing: 6) {
+                Spacer(minLength: 0)
+                HStack(spacing: 8) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(theme.accentIndigo)
+                    Text("오늘 등록된 체크 할 일이 없어요")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                Spacer(minLength: 0)
+            }
         }
     }
 }
@@ -363,7 +556,7 @@ struct TodayTasksWidget: Widget {
         }
         .configurationDisplayName("오늘의 할 일")
         .description("오늘 해야 할 일 목록을 홈 화면에서 바로 확인하고 체크해 완료할 수 있어요.")
-        .supportedFamilies([.systemMedium, .systemLarge])
+        .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
     }
 }
 
