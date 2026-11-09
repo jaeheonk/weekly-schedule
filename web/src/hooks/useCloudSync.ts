@@ -62,18 +62,24 @@ export function useCloudSync({
 
       isSyncingRef.current = true;
       let announcedSlowSync = options.isManual === true;
-      if (options.isManual) {
+      const showSyncingToast = () => {
+        if (toastTimeoutRef.current) {
+          clearTimeout(toastTimeoutRef.current);
+          toastTimeoutRef.current = null;
+        }
         setSyncStatus('syncing');
         setToastMessage('클라우드 동기화 중...');
+      };
+      if (options.isManual) {
+        showSyncingToast();
       }
       const slowNoticeTimer = setTimeout(() => {
         if (!isSyncingRef.current) return;
         announcedSlowSync = true;
-        setSyncStatus('syncing');
-        setToastMessage('클라우드 동기화 중...');
+        showSyncingToast();
       }, SLOW_SYNC_NOTICE_MS);
 
-      const showRecoveryToast = () => {
+      const showCompletedToast = () => {
         setSyncStatus('success');
         setToastMessage('클라우드 동기화 완료');
         scheduleToastDismiss(3500);
@@ -95,7 +101,7 @@ export function useCloudSync({
           latest.pathname === lastSyncedBlobPathnameRef.current
         ) {
           if (announcedSlowSync) {
-            showRecoveryToast();
+            showCompletedToast();
           }
           return;
         }
@@ -167,7 +173,7 @@ export function useCloudSync({
           setToastMessage(eventToastMessage);
           scheduleToastDismiss(4000);
         } else if (options.isManual || announcedSlowSync) {
-          showRecoveryToast();
+          showCompletedToast();
         } else {
           // Quiet background sync: no intrusive toast
           setSyncStatus('idle');

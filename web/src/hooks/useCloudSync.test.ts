@@ -243,6 +243,62 @@ describe('useCloudSync Hook', () => {
     expect(result.current.toastMessage).toContain('클라우드 동기화 완료');
   });
 
+  it('keeps 클라우드 동기화 중... up when a previous success toast is due to dismiss', async () => {
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
+      latest: null,
+      snapshot: null,
+      allBlobs: [],
+    });
+    vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({
+      url: 'https://blob.test/state.json',
+      pathname: 'families/family-main/state.json',
+    });
+
+    const { result } = renderHook(() =>
+      useCloudSync({ store, syncService, pollingIntervalMs: 0, syncOnMount: false })
+    );
+
+    await act(async () => {
+      await result.current.triggerSync({ isManual: true });
+    });
+    expect(result.current.toastMessage).toContain('클라우드 동기화 완료');
+
+    let resolveSlowFetch: (value: {
+      latest: null;
+      snapshot: null;
+      allBlobs: [];
+    }) => void = () => {};
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSlowFetch = resolve;
+        })
+    );
+
+    act(() => {
+      void result.current.triggerSync({ isManual: false });
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    expect(result.current.toastMessage).toContain('동기화 중...');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(result.current.syncStatus).toBe('syncing');
+    expect(result.current.toastMessage).toContain('동기화 중...');
+
+    await act(async () => {
+      resolveSlowFetch({ latest: null, snapshot: null, allBlobs: [] });
+    });
+
+    expect(result.current.syncStatus).toBe('success');
+    expect(result.current.toastMessage).toContain('클라우드 동기화 완료');
+  });
+
   it('keeps a fast background sync quiet', async () => {
     vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
       latest: null,
