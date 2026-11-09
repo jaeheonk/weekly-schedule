@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { VercelBlobStorage, sanitizeFamilyCode, DEFAULT_FAMILY_CODE } from './blobStorage.js';
+import { VercelBlobStorage, sanitizeFamilyCode } from './blobStorage.js';
 import * as blobSdk from '@vercel/blob';
 
 vi.mock('@vercel/blob', () => ({
@@ -19,10 +19,10 @@ describe('BlobStorage Seam 2: VercelBlobStorage & helpers', () => {
       expect(sanitizeFamilyCode('  My-Family_99  ')).toBe('my-family_99');
     });
 
-    it('strips invalid characters and falls back to default when empty', () => {
-      expect(sanitizeFamilyCode('!@#$%^&*()')).toBe(DEFAULT_FAMILY_CODE);
-      expect(sanitizeFamilyCode('')).toBe(DEFAULT_FAMILY_CODE);
-      expect(sanitizeFamilyCode(undefined)).toBe(DEFAULT_FAMILY_CODE);
+    it('strips invalid characters', () => {
+      expect(sanitizeFamilyCode('!@#$%^&*()')).toBe('');
+      expect(sanitizeFamilyCode('')).toBe('');
+      expect(sanitizeFamilyCode(undefined)).toBe('');
     });
 
     it('preserves valid alphanumeric with dash and underscore', () => {
@@ -38,6 +38,13 @@ describe('BlobStorage Seam 2: VercelBlobStorage & helpers', () => {
   });
 
   describe('getLatestSnapshot', () => {
+    it('throws error when familyCode is invalid or empty', async () => {
+      const storage = new VercelBlobStorage('test-token-123');
+      await expect(storage.getLatestSnapshot('')).rejects.toThrow(/familyCode/);
+      await expect(storage.getLatestSnapshot('   ')).rejects.toThrow(/familyCode/);
+      await expect(storage.getLatestSnapshot('@@@')).rejects.toThrow(/familyCode/);
+    });
+
     it('returns nulls when list returns empty blobs', async () => {
       vi.mocked(blobSdk.list).mockResolvedValueOnce({
         blobs: [],
@@ -113,6 +120,13 @@ describe('BlobStorage Seam 2: VercelBlobStorage & helpers', () => {
   });
 
   describe('uploadSnapshot', () => {
+    it('throws error when familyCode is invalid or empty', async () => {
+      const storage = new VercelBlobStorage('test-token-123');
+      await expect(
+        storage.uploadSnapshot({ familyCode: '', snapshot: {} })
+      ).rejects.toThrow(/familyCode/);
+    });
+
     it('uploads with private mode and cleans up previous blobs asynchronously', async () => {
       vi.mocked(blobSdk.put).mockResolvedValueOnce({
         url: 'https://blob.vercel-storage.com/families/test-fam/state-new.json',
@@ -162,33 +176,6 @@ describe('BlobStorage Seam 2: VercelBlobStorage & helpers', () => {
           'https://blob.vercel-storage.com/families/test-fam/state-old2.json',
         ],
         { token: 'test-token-123' }
-      );
-    });
-
-    it('falls back to public access mode if bucket rejects private mode', async () => {
-      vi.mocked(blobSdk.put)
-        .mockRejectedValueOnce(new Error('This store only allows public blobs'))
-        .mockResolvedValueOnce({
-          url: 'https://blob.vercel-storage.com/families/test-fam/state-public.json',
-          downloadUrl: 'https://blob.vercel-storage.com/families/test-fam/state-public.json',
-          pathname: 'families/test-fam/state-public.json',
-          contentType: 'application/json',
-          contentDisposition: '',
-          etag: 'mock-etag-2',
-        });
-
-      const storage = new VercelBlobStorage('test-token-123');
-      const res = await storage.uploadSnapshot({
-        familyCode: 'test-fam',
-        snapshot: { schemaVersion: 5 },
-      });
-
-      expect(res.pathname).toBe('families/test-fam/state-public.json');
-      expect(blobSdk.put).toHaveBeenCalledTimes(2);
-      expect(blobSdk.put).toHaveBeenLastCalledWith(
-        expect.any(String),
-        expect.any(String),
-        expect.objectContaining({ access: 'public' })
       );
     });
   });

@@ -1,44 +1,23 @@
 import cors from 'cors';
 
-export const ALLOWED_ORIGINS: (string | RegExp)[] = [
+export const ALLOWED_ORIGINS = [
   'https://jaeheonk.github.io',
-  /^https:\/\/jaeheonk\.github\.io/,
   'http://localhost:5173',
   'http://localhost:4173',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:4173',
 ];
 
 export function createCorsMiddleware() {
-  const extraOrigins = (process.env.ALLOWED_ORIGINS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-
-  const origins = [...ALLOWED_ORIGINS, ...extraOrigins];
+  const allowedSet = new Set(ALLOWED_ORIGINS);
 
   return cors({
     origin: (requestOrigin, callback) => {
       // Allow non-browser requests (e.g. curl, tests, server-to-server)
-      if (!requestOrigin) {
+      if (!requestOrigin || allowedSet.has(requestOrigin)) {
         return callback(null, true);
       }
-
-      const isAllowed = origins.some((allowed) => {
-        if (typeof allowed === 'string') {
-          return allowed === requestOrigin;
-        }
-        return allowed.test(requestOrigin);
-      });
-
-      if (isAllowed) {
-        return callback(null, true);
-      }
-
       return callback(null, false);
     },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-family-code', 'x-device-id'],
-    credentials: true,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type'],
   });
 }

@@ -1,11 +1,14 @@
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction, Router } from 'express';
 import { BlobStorage } from '../types.js';
+import { handleHealthCheck } from './health.js';
 
 export interface SyncRouteContext {
   getStorage: () => BlobStorage | undefined;
 }
 
-export function createSyncRouter(context: SyncRouteContext) {
+export function createSyncRouter(context: SyncRouteContext): Router {
+  const router = Router();
+
   // Middleware to ensure token / storage is configured
   const requireStorage = (req: Request, res: Response, next: NextFunction) => {
     const storage = context.getStorage();
@@ -21,8 +24,23 @@ export function createSyncRouter(context: SyncRouteContext) {
 
   const getLatest = async (req: Request, res: Response): Promise<void> => {
     try {
-      const storage = context.getStorage()!;
+      const storage = context.getStorage();
+      if (!storage) {
+        res.status(500).json({
+          error:
+            '서버 환경 변수 BLOB_READ_WRITE_TOKEN이 설정되지 않아 클라우드 동기화를 처리할 수 없습니다.',
+        });
+        return;
+      }
+
       const familyCode = (req.query.familyCode as string) || '';
+      if (!familyCode.trim()) {
+        res.status(400).json({
+          error: '유효한 familyCode 쿼리 파라미터가 필요합니다.',
+        });
+        return;
+      }
+
       const result = await storage.getLatestSnapshot(familyCode);
       res.status(200).json(result);
     } catch (err: unknown) {
@@ -33,7 +51,15 @@ export function createSyncRouter(context: SyncRouteContext) {
 
   const uploadSnapshot = async (req: Request, res: Response): Promise<void> => {
     try {
-      const storage = context.getStorage()!;
+      const storage = context.getStorage();
+      if (!storage) {
+        res.status(500).json({
+          error:
+            '서버 환경 변수 BLOB_READ_WRITE_TOKEN이 설정되지 않아 클라우드 동기화를 처리할 수 없습니다.',
+        });
+        return;
+      }
+
       const { familyCode, shortDeviceId, snapshot, previousBlobsToDelete } = req.body || {};
 
       if (!familyCode || !snapshot || typeof snapshot !== 'object') {
@@ -59,9 +85,10 @@ export function createSyncRouter(context: SyncRouteContext) {
     }
   };
 
-  return {
-    requireStorage,
-    getLatest,
-    uploadSnapshot,
-  };
+  // Mount sync routes
+  router.get('/health', handleHealthCheck);
+  router.get('/latest', requireStorage, getLatest);
+  router.post('/upload', requireStorage, uploadSnapshot);
+
+  return router;
 }

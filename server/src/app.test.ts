@@ -1,6 +1,22 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import { createApp } from './app.js';
+import { BlobStorage, SyncLatestResponse, UploadResponse } from './types.js';
+
+function createMockStorage(overrides: Partial<BlobStorage> = {}): BlobStorage {
+  return {
+    getLatestSnapshot: async (): Promise<SyncLatestResponse> => ({
+      latest: null,
+      snapshot: null,
+      allBlobs: [],
+    }),
+    uploadSnapshot: async (): Promise<UploadResponse> => ({
+      url: 'https://blob.vercel-storage.com/default.json',
+      pathname: 'families/default/state-0.json',
+    }),
+    ...overrides,
+  };
+}
 
 describe('Server Seam 1: Healthcheck & CORS', () => {
   const originalEnv = process.env;
@@ -13,14 +29,17 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
     process.env = originalEnv;
   });
 
-  it('GET /health returns 200 and health status', async () => {
+  it('GET /health and GET /api/sync/health return 200 and health status', async () => {
     const app = createApp();
-    const res = await request(app).get('/health');
 
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('status', 'ok');
-    expect(res.body).toHaveProperty('timestamp');
-    expect(typeof res.body.timestamp).toBe('number');
+    const resRoot = await request(app).get('/health');
+    expect(resRoot.status).toBe(200);
+    expect(resRoot.body).toHaveProperty('status', 'ok');
+    expect(typeof resRoot.body.timestamp).toBe('number');
+
+    const resSync = await request(app).get('/api/sync/health');
+    expect(resSync.status).toBe(200);
+    expect(resSync.body).toHaveProperty('status', 'ok');
   });
 
   it('allows CORS from GitHub Pages origin', async () => {
@@ -33,24 +52,27 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
     expect(res.headers['access-control-allow-origin']).toBe('https://jaeheonk.github.io');
   });
 
-  it('allows CORS from localhost:5173 origin', async () => {
+  it('allows CORS from localhost:5173 and localhost:4173', async () => {
     const app = createApp();
-    const res = await request(app)
+
+    const res5173 = await request(app)
       .get('/health')
       .set('Origin', 'http://localhost:5173');
+    expect(res5173.headers['access-control-allow-origin']).toBe('http://localhost:5173');
 
-    expect(res.status).toBe(200);
-    expect(res.headers['access-control-allow-origin']).toBe('http://localhost:5173');
+    const res4173 = await request(app)
+      .get('/health')
+      .set('Origin', 'http://localhost:4173');
+    expect(res4173.headers['access-control-allow-origin']).toBe('http://localhost:4173');
   });
 
-  it('allows CORS from localhost:4173 origin', async () => {
+  it('rejects CORS from unauthorized origins', async () => {
     const app = createApp();
     const res = await request(app)
       .get('/health')
-      .set('Origin', 'http://localhost:4173');
+      .set('Origin', 'https://malicious-site.example.com');
 
-    expect(res.status).toBe(200);
-    expect(res.headers['access-control-allow-origin']).toBe('http://localhost:4173');
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
   });
 
   it('handles OPTIONS preflight request for allowed origins', async () => {
@@ -69,7 +91,7 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
     delete process.env.BLOB_READ_WRITE_TOKEN;
     const app = createApp({ blobToken: undefined });
 
-    const res = await request(app).get('/api/sync/latest');
+    const res = await request(app).get('/api/sync/latest?familyCode=test-fam');
 
     expect(res.status).toBe(500);
     expect(res.body).toHaveProperty('error');
@@ -90,16 +112,21 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
   });
 
   describe('GET /api/sync/latest', () => {
-    it('returns empty snapshot when no blobs exist', async () => {
-      const mockStorage = {
-        getLatestSnapshot: async () => ({
-          latest: null,
-          snapshot: null,
-          allBlobs: [],
-        }),
-        uploadSnapshot: async () => ({ url: '', pathname: '' }),
-      };
+    it('returns 400 when familyCode query param is missing or empty', async () => {
+      const mockStorage = createMockStorage();
+      const app = createApp({ blobStorage: mockStorage });
 
+      const resMissing = await request(app).get('/api/sync/latest');
+      expect(resMissing.status).toBe(400);
+      expect(resMissing.body.error).toContain('familyCode');
+
+      const resEmpty = await request(app).get('/api/sync/latest?familyCode=   ');
+      expect(resEmpty.status).toBe(400);
+      expect(resEmpty.body.error).toContain('familyCode');
+    });
+
+    it('returns empty snapshot when no blobs exist', async () => {
+      const mockStorage = createMockStorage();
       const app = createApp({ blobStorage: mockStorage });
       const res = await request(app).get('/api/sync/latest?familyCode=test-fam');
 
@@ -117,22 +144,21 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
         familyCode: 'test-fam',
         items: [{ id: 'item-1', title: '수학 숙제' }],
       };
-      const mockStorage = {
+      const mockStorage = createMockStorage({
         getLatestSnapshot: async (familyCode: string) => ({
           latest: {
-            url: 'https://blob.vercel-storage.com/families/test-fam/state-123.json',
-            pathname: 'families/test-fam/state-123.json',
+            url: `https://blob.vercel-storage.com/families/${familyCode}/state-123.json`,
+            pathname: `families/${familyCode}/state-123.json`,
           },
           snapshot: dummySnapshot,
           allBlobs: [
             {
-              url: 'https://blob.vercel-storage.com/families/test-fam/state-123.json',
-              pathname: 'families/test-fam/state-123.json',
+              url: `https://blob.vercel-storage.com/families/${familyCode}/state-123.json`,
+              pathname: `families/${familyCode}/state-123.json`,
             },
           ],
         }),
-        uploadSnapshot: async () => ({ url: '', pathname: '' }),
-      };
+      });
 
       const app = createApp({ blobStorage: mockStorage });
       const res = await request(app).get('/api/sync/latest?familyCode=test-fam');
@@ -144,12 +170,11 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
     });
 
     it('returns 500 when storage throws', async () => {
-      const mockStorage = {
+      const mockStorage = createMockStorage({
         getLatestSnapshot: async () => {
           throw new Error('Vercel Blob Rate Limited');
         },
-        uploadSnapshot: async () => ({ url: '', pathname: '' }),
-      };
+      });
 
       const app = createApp({ blobStorage: mockStorage });
       const res = await request(app).get('/api/sync/latest?familyCode=test-fam');
@@ -161,11 +186,7 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
 
   describe('POST /api/sync/upload', () => {
     it('returns 400 when body is missing required fields', async () => {
-      const mockStorage = {
-        getLatestSnapshot: async () => ({ latest: null, snapshot: null, allBlobs: [] }),
-        uploadSnapshot: async () => ({ url: '', pathname: '' }),
-      };
-
+      const mockStorage = createMockStorage();
       const app = createApp({ blobStorage: mockStorage });
 
       const res1 = await request(app).post('/api/sync/upload').send({});
@@ -177,16 +198,15 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
 
     it('successfully uploads snapshot and returns 200 with result', async () => {
       let passedPayload: any = null;
-      const mockStorage = {
-        getLatestSnapshot: async () => ({ latest: null, snapshot: null, allBlobs: [] }),
-        uploadSnapshot: async (payload: any) => {
+      const mockStorage = createMockStorage({
+        uploadSnapshot: async (payload) => {
           passedPayload = payload;
           return {
             url: 'https://blob.vercel-storage.com/families/test-fam/state-999.json',
             pathname: 'families/test-fam/state-999.json',
           };
         },
-      };
+      });
 
       const app = createApp({ blobStorage: mockStorage });
       const dummySnapshot = { schemaVersion: 5, familyCode: 'test-fam' };
@@ -213,12 +233,11 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
     });
 
     it('returns 500 when storage upload fails', async () => {
-      const mockStorage = {
-        getLatestSnapshot: async () => ({ latest: null, snapshot: null, allBlobs: [] }),
+      const mockStorage = createMockStorage({
         uploadSnapshot: async () => {
           throw new Error('Upload payload exceeded limit');
         },
-      };
+      });
 
       const app = createApp({ blobStorage: mockStorage });
       const res = await request(app)

@@ -19,7 +19,7 @@ export function createApp(options: AppOptions = {}): Express {
   // JSON body parser with 5MB limit for rich snapshots
   app.use(express.json({ limit: '5mb' }));
 
-  // Healthcheck
+  // Root healthcheck for container monitoring and uptime pings
   app.get('/health', handleHealthCheck);
 
   // Lazy or injected storage resolver
@@ -34,10 +34,9 @@ export function createApp(options: AppOptions = {}): Express {
     return new VercelBlobStorage(token);
   };
 
+  // Mount sync router under /api/sync
   const syncRouter = createSyncRouter({ getStorage });
-
-  app.get('/api/sync/latest', syncRouter.requireStorage, syncRouter.getLatest);
-  app.post('/api/sync/upload', syncRouter.requireStorage, syncRouter.uploadSnapshot);
+  app.use('/api/sync', syncRouter);
 
   return app;
 }

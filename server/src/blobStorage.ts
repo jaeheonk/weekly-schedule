@@ -7,12 +7,9 @@ import {
   VercelBlobItem,
 } from './types.js';
 
-export const DEFAULT_FAMILY_CODE = 'family-main';
-
 export function sanitizeFamilyCode(raw?: string): string {
   const trimmed = (raw || '').trim().toLowerCase();
-  const filtered = trimmed.replace(/[^a-z0-9_-]/g, '');
-  return filtered.length > 0 ? filtered : DEFAULT_FAMILY_CODE;
+  return trimmed.replace(/[^a-z0-9_-]/g, '');
 }
 
 export class VercelBlobStorage implements BlobStorage {
@@ -28,8 +25,11 @@ export class VercelBlobStorage implements BlobStorage {
 
   public async getLatestSnapshot(familyCode: string): Promise<SyncLatestResponse> {
     const safeFamily = sanitizeFamilyCode(familyCode);
-    const prefix = `families/${safeFamily}/state-`;
+    if (!safeFamily) {
+      throw new Error('유효한 familyCode가 필요합니다.');
+    }
 
+    const prefix = `families/${safeFamily}/state-`;
     const listResult = await list({
       prefix,
       limit: 100,
@@ -66,6 +66,10 @@ export class VercelBlobStorage implements BlobStorage {
 
   public async uploadSnapshot(payload: UploadPayload): Promise<UploadResponse> {
     const safeFamily = sanitizeFamilyCode(payload.familyCode);
+    if (!safeFamily) {
+      throw new Error('유효한 familyCode가 필요합니다.');
+    }
+
     const timestampMs = Date.now();
     const paddedTs = String(timestampMs).padStart(14, '0');
     const safeDeviceId = (payload.shortDeviceId || 'web')
@@ -75,30 +79,13 @@ export class VercelBlobStorage implements BlobStorage {
     const pathname = `families/${safeFamily}/state-${paddedTs}-${safeDeviceId}.json`;
     const jsonString = JSON.stringify(payload.snapshot);
 
-    let putResult: { url: string; pathname: string };
-    try {
-      putResult = await put(pathname, jsonString, {
-        access: 'private',
-        token: this.token,
-        addRandomSuffix: false,
-        allowOverwrite: true,
-        contentType: 'application/json',
-      });
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      if (errMsg.toLowerCase().includes('public')) {
-        // Fallback for buckets configured for public access
-        putResult = await put(pathname, jsonString, {
-          access: 'public',
-          token: this.token,
-          addRandomSuffix: false,
-          allowOverwrite: true,
-          contentType: 'application/json',
-        });
-      } else {
-        throw err;
-      }
-    }
+    const putResult = await put(pathname, jsonString, {
+      access: 'private',
+      token: this.token,
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      contentType: 'application/json',
+    });
 
     // Fire-and-forget 비동기 정리
     const previous = payload.previousBlobsToDelete || [];
@@ -119,32 +106,16 @@ export class VercelBlobStorage implements BlobStorage {
   }
 
   private async downloadSnapshot(blobUrl: string): Promise<Record<string, unknown>> {
-    try {
-      const getResult = await get(blobUrl, {
-        access: 'private',
-        token: this.token,
-      });
-
-      if (getResult && getResult.stream) {
-        const text = await new Response(getResult.stream).text();
-        return JSON.parse(text);
-      }
-    } catch {
-      // Fallback: authorized fetch
-    }
-
-    const res = await fetch(blobUrl, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        'Cache-Control': 'no-cache',
-      },
+    const getResult = await get(blobUrl, {
+      access: 'private',
+      token: this.token,
     });
 
-    if (!res.ok) {
-      throw new Error(`스냅샷 다운로드 실패 (${res.status}): ${res.statusText}`);
+    if (!getResult || !getResult.stream) {
+      throw new Error('스냅샷 본문을 읽을 수 없습니다.');
     }
 
-    return (await res.json()) as Record<string, unknown>;
+    const text = await new Response(getResult.stream).text();
+    return JSON.parse(text);
   }
 }
