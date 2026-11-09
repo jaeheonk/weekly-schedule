@@ -206,4 +206,53 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(store2.isCompleted(item)).toBe(true);
     });
   });
+
+  describe('CloudSyncSnapshot Generation & Merging (Seam 2)', () => {
+    it('makeCurrentSnapshot creates valid CloudSyncSnapshot schemaVersion 5', () => {
+      const store = new ScheduleStore();
+      const snapshot = store.makeCurrentSnapshot();
+
+      expect(snapshot.schemaVersion).toBe(5);
+      expect(snapshot.familyCode).toBe('family-main');
+      expect(snapshot.parentPinCode).toBe('160125');
+      expect(snapshot.items.length).toBeGreaterThan(0);
+      expect(typeof snapshot.updatedAt).toBe('number');
+      expect(snapshot.updatedByDeviceId).toBeTruthy();
+    });
+
+    it('records timestamped flags when toggling item completion', () => {
+      const store = new ScheduleStore();
+      const item = store.getTodayItems().find((i) => store.isItemCheckable(i))!;
+      expect(item).toBeDefined();
+
+      store.toggleCompletion(item);
+      const snapshot = store.makeCurrentSnapshot();
+      const key = store.itemKey(item.id);
+
+      expect(snapshot.completionFlags[key]).toBeDefined();
+      expect(snapshot.completionFlags[key].isSet).toBe(true);
+      expect(snapshot.completionFlags[key].updatedAt).toBeGreaterThan(0);
+    });
+
+    it('applyMergedRemoteSnapshot integrates remote modifications and updates state', () => {
+      const store = new ScheduleStore();
+      const item = store.getTodayItems().find((i) => store.isItemCheckable(i))!;
+      const key = store.itemKey(item.id);
+
+      expect(store.isCompleted(item)).toBe(false);
+
+      const remoteSnapshot = store.makeCurrentSnapshot();
+      remoteSnapshot.completionFlags[key] = {
+        isSet: true,
+        updatedAt: Date.now() / 1000 + 10,
+      };
+      remoteSnapshot.parentPinCode = '654321';
+      remoteSnapshot.parentPinUpdatedAt = Date.now() / 1000 + 10;
+
+      store.applyMergedRemoteSnapshot(remoteSnapshot);
+
+      expect(store.isCompleted(item)).toBe(true);
+      expect(store.getParentPinCode()).toBe('654321');
+    });
+  });
 });

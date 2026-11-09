@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, CheckSquare, Grid } from 'lucide-react';
+import { Calendar, CheckSquare, Grid, RefreshCw } from 'lucide-react';
 import { getWeekdayNumber, getWeekKey } from '../domain/calendarUtils';
 import { WEEKDAYS } from '../types/schedule';
 
@@ -7,12 +7,16 @@ export interface NavigationProps {
   activeTab: 'today' | 'weekly';
   onSelectTab: (tab: 'today' | 'weekly') => void;
   currentDate?: Date;
+  isSyncing?: boolean;
+  onSync?: () => void;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
   activeTab,
   onSelectTab,
   currentDate = new Date(),
+  isSyncing = false,
+  onSync,
 }) => {
   const weekdayNum = getWeekdayNumber(currentDate);
   const weekdayInfo = WEEKDAYS.find((w) => w.number === weekdayNum);
@@ -35,10 +39,31 @@ export const Navigation: React.FC<NavigationProps> = ({
             </div>
           </div>
 
-          <div className="bg-slate-100 text-slate-700 text-xs font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5 border border-slate-200/60">
-            <span>{formattedDate}</span>
-            <span className="text-slate-400 font-normal">|</span>
-            <span className="text-blue-600 font-bold">{weekKey}</span>
+          <div className="flex items-center gap-2">
+            <div className="bg-slate-100 text-slate-700 text-xs font-semibold px-2.5 py-1 rounded-full flex items-center gap-1.5 border border-slate-200/60">
+              <span>{formattedDate}</span>
+              <span className="text-slate-400 font-normal">|</span>
+              <span className="text-blue-600 font-bold">{weekKey}</span>
+            </div>
+
+            {onSync && (
+              <button
+                type="button"
+                onClick={onSync}
+                disabled={isSyncing}
+                title="클라우드 동기화 (⌘R)"
+                aria-label="클라우드 동기화"
+                data-testid="header-sync-button"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200/80 active:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors border border-slate-200/60 disabled:opacity-60"
+              >
+                <RefreshCw
+                  className={`w-3.5 h-3.5 ${
+                    isSyncing ? 'animate-spin text-blue-600' : 'text-slate-500'
+                  }`}
+                />
+                <span className="hidden md:inline">{isSyncing ? '동기화 중' : '동기화'}</span>
+              </button>
+            )}
           </div>
         </div>
 

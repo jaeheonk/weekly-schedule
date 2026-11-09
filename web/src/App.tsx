@@ -2,11 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { Navigation } from './components/Navigation';
 import { TodayScheduleView } from './components/TodayScheduleView';
 import { WeeklyGridView } from './components/WeeklyGridView';
+import { SyncToast } from './components/SyncToast';
+import { useCloudSync } from './hooks/useCloudSync';
 import { globalScheduleStore } from './domain/scheduleStore';
 import { compareScheduleItemsByTime } from './domain/calendarUtils';
 import { ScheduleItem, WEEKDAYS } from './types/schedule';
 
-export const App: React.FC = () => {
+export interface AppProps {
+  syncOnMount?: boolean;
+}
+
+export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
   const getTabFromHash = (): 'today' | 'weekly' => {
     const hash = window.location.hash.toLowerCase();
     if (hash === '#weekly') return 'weekly';
@@ -17,6 +23,11 @@ export const App: React.FC = () => {
   const [items, setItems] = useState<ScheduleItem[]>(() => globalScheduleStore.getItems());
   const currentDate = globalScheduleStore.getCurrentDate();
   const currentWeekday = globalScheduleStore.getCurrentWeekday();
+
+  const { syncStatus, toastMessage, isSyncing, triggerSync, clearToast } = useCloudSync({
+    store: globalScheduleStore,
+    syncOnMount,
+  });
 
   useEffect(() => {
     const onHashChange = () => {
@@ -46,10 +57,18 @@ export const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col text-slate-800">
+      <SyncToast
+        status={syncStatus}
+        message={toastMessage}
+        onClose={clearToast}
+      />
+
       <Navigation
         activeTab={activeTab}
         onSelectTab={handleSelectTab}
         currentDate={currentDate}
+        isSyncing={isSyncing}
+        onSync={() => triggerSync({ isManual: true })}
       />
 
       <main className="flex-1 pb-12">
