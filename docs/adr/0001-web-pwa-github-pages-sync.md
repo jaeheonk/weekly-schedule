@@ -1,7 +1,7 @@
 # 0001. GitHub Pages 배포 및 Vercel Blob 직접 연동 웹앱(PWA) 추가
 
 ## Status
-Accepted
+Accepted (Direct CORS communication superseded by ADR-0002)
 
 ## Context
 iOS 무료 개인 Apple 개발자 계정은 7일마다 Xcode를 통해 앱을 재서명해야 하며 최대 3개의 앱 슬롯 제한이 있어 지속적인 사용에 번거로움이 있었다. 또한 별도의 유료 서버 호스팅 비용 없이 웹 브라우저를 통해 아이폰, 아이패드, PC 등 어디서나 동일한 기능으로 시간표에 접속할 수 있는 환경이 필요했다.
