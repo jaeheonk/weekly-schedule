@@ -106,3 +106,13 @@ export interface ScheduleItem {
   targetWeekKey?: WeekKey | null;
   updatedAt: number; // Unix epoch seconds
 }
+
+export type DeviceRole = 'child' | 'parent';
+
+export interface CompletionStats {
+  completed: number;
+  verified: number;
+  waiting: number;
+  total: number;
+  percentage: number;
+}

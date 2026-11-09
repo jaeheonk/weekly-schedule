@@ -61,4 +61,25 @@ describe('App & Hash Navigation (Seam 2)', () => {
 
     expect(screen.getByTestId('today-view')).toBeInTheDocument();
   });
+
+  it('allows child to check off an item on Today view and updates progress bar percentage', () => {
+    render(<App />);
+
+    // Gauge should initially show 0% (or whatever initial completed items)
+    expect(screen.getByTestId('progress-gauge-card')).toBeInTheDocument();
+
+    // Find the first checkable item's check button
+    const checkBtns = screen.getAllByRole('button', { name: /다 했어요|완료됨/i });
+    expect(checkBtns.length).toBeGreaterThan(0);
+
+    const firstCheckBtn = checkBtns[0];
+    const initialChecked = firstCheckBtn.getAttribute('aria-checked');
+    expect(initialChecked).toBe('false');
+
+    // Click check button
+    fireEvent.click(firstCheckBtn);
+
+    // Should now be checked
+    expect(firstCheckBtn.getAttribute('aria-checked')).toBe('true');
+  });
 });

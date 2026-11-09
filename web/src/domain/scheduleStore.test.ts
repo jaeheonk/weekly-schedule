@@ -78,4 +78,132 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(todayItems.every((item) => item.weekday === 1)).toBe(true);
     });
   });
+
+  describe('Child Mode Checklist & Completion Tracking (Seam 1)', () => {
+    it('allows child to toggle completion of checkable items and synchronizes subtasks', () => {
+      const testDate = new Date(2026, 10, 9); // 2026-W46, Monday
+      const store = new ScheduleStore({ currentDate: testDate });
+      const checkableItem = store.getTodayItems().find((item) => item.subTasks.length > 0 && item.category === 'study')!;
+
+      expect(checkableItem).toBeDefined();
+      expect(store.isCompleted(checkableItem)).toBe(false);
+
+      // Child checks the item
+      const toggleResult = store.toggleCompletion(checkableItem);
+      expect(toggleResult).toBe(true);
+      expect(store.isCompleted(checkableItem)).toBe(true);
+
+      // All subtasks of this item should also be marked completed
+      for (const sub of checkableItem.subTasks) {
+        expect(store.isSubTaskCompleted(sub)).toBe(true);
+      }
+
+      // Unchecking the item unchecks the item and its subtasks
+      store.toggleCompletion(checkableItem);
+      expect(store.isCompleted(checkableItem)).toBe(false);
+      for (const sub of checkableItem.subTasks) {
+        expect(store.isSubTaskCompleted(sub)).toBe(false);
+      }
+    });
+
+    it('toggling subtasks individually updates parent item completion status', () => {
+      const testDate = new Date(2026, 10, 9);
+      const store = new ScheduleStore({ currentDate: testDate });
+      const itemWithSubtasks = store.getTodayItems().find((item) => item.subTasks.length >= 2)!;
+      expect(itemWithSubtasks).toBeDefined();
+
+      const [sub1, sub2] = itemWithSubtasks.subTasks;
+
+      // Checking sub1 does not complete parent item yet
+      store.toggleSubTaskCompletion(sub1, itemWithSubtasks);
+      expect(store.isSubTaskCompleted(sub1)).toBe(true);
+      expect(store.isCompleted(itemWithSubtasks)).toBe(false);
+
+      // If item has 2 subtasks, checking sub2 completes the parent item
+      if (itemWithSubtasks.subTasks.length === 2) {
+        store.toggleSubTaskCompletion(sub2, itemWithSubtasks);
+        expect(store.isSubTaskCompleted(sub2)).toBe(true);
+        expect(store.isCompleted(itemWithSubtasks)).toBe(true);
+
+        // Unchecking sub1 unchecks parent item
+        store.toggleSubTaskCompletion(sub1, itemWithSubtasks);
+        expect(store.isSubTaskCompleted(sub1)).toBe(false);
+        expect(store.isCompleted(itemWithSubtasks)).toBe(false);
+      }
+    });
+
+    it('protects parent-verified items and subtasks from being unchecked in Child Mode', () => {
+      const testDate = new Date(2026, 10, 9);
+      const store = new ScheduleStore({ currentDate: testDate });
+      const item = store.getTodayItems().find((i) => i.category === 'study' && i.subTasks.length > 0)!;
+
+      // Child marks it completed
+      store.toggleCompletion(item);
+      expect(store.isCompleted(item)).toBe(true);
+
+      // Parent stamps verification
+      store.setParentVerified(item.id, true);
+      expect(store.isParentVerified(item)).toBe(true);
+
+      // Child attempts to uncheck the verified item - must be rejected
+      const uncheckResult = store.toggleCompletion(item);
+      expect(uncheckResult).toBe(false);
+      expect(store.isCompleted(item)).toBe(true);
+
+      // Child attempts to uncheck subtask of verified item - must be rejected
+      const sub = item.subTasks[0];
+      const subUncheckResult = store.toggleSubTaskCompletion(sub, item);
+      expect(subUncheckResult).toBe(false);
+      expect(store.isSubTaskCompleted(sub)).toBe(true);
+    });
+
+    it('ignores completion toggle for non-checkable categories like routine or free', () => {
+      const testDate = new Date(2026, 10, 9);
+      const store = new ScheduleStore({ currentDate: testDate });
+      const routineItem = store.getTodayItems().find((i) => i.category === 'routine')!;
+      expect(routineItem).toBeDefined();
+
+      const result = store.toggleCompletion(routineItem);
+      expect(result).toBe(false);
+      expect(store.isCompleted(routineItem)).toBe(false);
+    });
+
+    it('calculates completion statistics and progress percentage accurately', () => {
+      const testDate = new Date(2026, 10, 9);
+      const store = new ScheduleStore({ currentDate: testDate });
+      const mondayCheckable = store.getTodayItems().filter((i) => i.category !== 'routine' && i.category !== 'free');
+      const total = mondayCheckable.length;
+      expect(total).toBeGreaterThan(0);
+
+      const initialStats = store.getCompletionStats(1);
+      expect(initialStats.total).toBe(total);
+      expect(initialStats.completed).toBe(0);
+      expect(initialStats.percentage).toBe(0);
+
+      // Complete one item
+      store.toggleCompletion(mondayCheckable[0]);
+      const statsAfterOne = store.getCompletionStats(1);
+      expect(statsAfterOne.completed).toBe(1);
+      expect(statsAfterOne.percentage).toBe(Math.round((1 / total) * 100));
+
+      // Verify parent verification stat
+      store.setParentVerified(mondayCheckable[0].id, true);
+      const statsAfterVerify = store.getCompletionStats(1);
+      expect(statsAfterVerify.verified).toBe(1);
+      expect(statsAfterVerify.waiting).toBe(0);
+    });
+
+    it('persists completions to localStorage across store instances', () => {
+      const testDate = new Date(2026, 10, 9);
+      const store1 = new ScheduleStore({ currentDate: testDate });
+      const item = store1.getTodayItems().find((i) => i.category === 'study')!;
+
+      store1.toggleCompletion(item);
+      expect(store1.isCompleted(item)).toBe(true);
+
+      // Create new store instance loading from the same localStorage
+      const store2 = new ScheduleStore({ currentDate: testDate });
+      expect(store2.isCompleted(item)).toBe(true);
+    });
+  });
 });

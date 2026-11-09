@@ -1,88 +1,366 @@
-import React from 'react';
-import { Bell, Clock, ListChecks } from 'lucide-react';
-import { ScheduleItem } from '../types/schedule';
-import { CATEGORIES } from '../types/schedule';
+import React, { useState, useEffect } from 'react';
+import {
+  Bell,
+  Clock,
+  ListChecks,
+  CheckCircle2,
+  Circle,
+  CheckSquare,
+  Square,
+  Award,
+  Sparkles,
+  Lock,
+  X,
+} from 'lucide-react';
+import { ScheduleItem, CATEGORIES, SubTask } from '../types/schedule';
 import { formatTimeRange } from '../domain/calendarUtils';
+import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
+import { playCompletionChime } from '../services/soundEffects';
 
 export interface TodayScheduleViewProps {
   items: ScheduleItem[];
   weekdayName: string;
+  store?: ScheduleStore;
+  onPlayChime?: () => void;
 }
 
-export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({ items, weekdayName }) => {
+export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
+  items,
+  weekdayName,
+  store = globalScheduleStore,
+  onPlayChime = playCompletionChime,
+}) => {
+  const [, setRenderVersion] = useState(0);
+  const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    const unsubscribe = store.subscribe(() => {
+      setRenderVersion((v) => v + 1);
+    });
+    return unsubscribe;
+  }, [store]);
+
+  const showNotice = (msg: string) => {
+    setNoticeMessage(msg);
+  };
+
+  useEffect(() => {
+    if (!noticeMessage) return;
+    const timer = setTimeout(() => {
+      setNoticeMessage(null);
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [noticeMessage]);
+
+  const stats = store.getCompletionStats(items);
+
+  const handleItemToggle = (item: ScheduleItem) => {
+    const wasCompleted = store.isCompleted(item);
+    const result = store.toggleCompletionWithResult(item);
+
+    if (!result.ok) {
+      if (result.reason === 'parent_verified') {
+        showNotice('부모님이 확인 완료한 숙제는 변경할 수 없어요 🔒');
+      }
+      return;
+    }
+
+    if (!wasCompleted) {
+      onPlayChime();
+    }
+  };
+
+  const handleSubTaskToggle = (sub: SubTask, parentItem: ScheduleItem) => {
+    const wasDone = store.isSubTaskCompleted(sub);
+    const result = store.toggleSubTaskCompletionWithResult(sub, parentItem);
+
+    if (!result.ok) {
+      if (result.reason === 'parent_verified') {
+        showNotice('부모님이 확인 완료한 숙제는 변경할 수 없어요 🔒');
+      }
+      return;
+    }
+
+    if (!wasDone) {
+      onPlayChime();
+    }
+  };
+
+  const getSlogan = () => {
+    if (stats.total === 0) return '오늘 등록된 할 일이 없어요 😊';
+    if (stats.percentage === 100) return '와! 오늘 할 일을 모두 완료했어요! 🎉';
+    if (stats.percentage >= 60) return '조금만 더 힘내면 오늘 할 일 올클리어! ✨';
+    if (stats.percentage > 0) return '차근차근 멋지게 해내고 있어요! 👏';
+    return '오늘도 즐겁고 힘차게 시작해 볼까요? 🚀';
+  };
+
   return (
     <div data-testid="today-view" className="max-w-4xl mx-auto px-4 py-6 space-y-4">
-      <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <span>오늘의 할 일</span>
-            <span className="text-blue-600 bg-blue-50 text-sm font-semibold px-2 py-0.5 rounded-md border border-blue-100">
-              {weekdayName}
-            </span>
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">총 {items.length}개의 일정이 등록되어 있습니다.</p>
+      {/* Toast Notice Banner for Protected Parent Verification */}
+      {noticeMessage && (
+        <div
+          data-testid="parent-verified-notice"
+          className="fixed top-20 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2.5 bg-slate-900/95 text-white px-5 py-3 rounded-2xl shadow-xl border border-slate-700/60 backdrop-blur-md animate-in fade-in slide-in-from-top duration-300"
+        >
+          <Lock className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span className="text-sm font-semibold tracking-tight">{noticeMessage}</span>
+          <button
+            onClick={() => setNoticeMessage(null)}
+            className="ml-2 text-slate-400 hover:text-white"
+            aria-label="닫기"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* 1. Daily Progress Gauge Card */}
+      <div
+        data-testid="progress-gauge-card"
+        className="bg-gradient-to-br from-blue-600 via-indigo-600 to-indigo-700 rounded-3xl p-5 sm:p-6 text-white shadow-lg shadow-indigo-500/10 relative overflow-hidden"
+      >
+        <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold bg-white/20 backdrop-blur-sm px-2.5 py-0.5 rounded-full text-white">
+                {weekdayName}
+              </span>
+              <span className="text-xs text-blue-100 font-medium">일일 체크리스트</span>
+            </div>
+
+            <div className="flex items-center gap-1.5 text-xs font-bold bg-white/15 px-3 py-1 rounded-full">
+              <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+              <span data-testid="progress-percentage-text">{stats.percentage}%</span>
+            </div>
+          </div>
+
+          <div>
+            <h2 className="text-lg sm:text-xl font-black tracking-tight">{getSlogan()}</h2>
+          </div>
+
+          {/* Animated Progress Bar */}
+          <div className="space-y-1.5 pt-1">
+            <div className="w-full bg-black/20 h-3 rounded-full overflow-hidden p-0.5">
+              <div
+                data-testid="progress-bar-fill"
+                className="h-full bg-gradient-to-r from-emerald-300 via-teal-300 to-emerald-400 rounded-full transition-all duration-500 ease-out shadow-sm"
+                style={{ width: `${stats.percentage}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs font-medium text-blue-100 pt-1">
+              <div className="flex items-center gap-3">
+                <span data-testid="stats-completed-badge" className="flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>
+                    다 했어요 {stats.completed}/{stats.total}
+                  </span>
+                </span>
+                {stats.verified > 0 && (
+                  <span data-testid="stats-verified-badge" className="flex items-center gap-1 text-emerald-200">
+                    <Award className="w-3.5 h-3.5 text-emerald-300" />
+                    <span>
+                      부모확인 {stats.verified}/{stats.total}
+                    </span>
+                  </span>
+                )}
+              </div>
+
+              <span>남은 할 일 {Math.max(0, stats.total - stats.completed)}개</span>
+            </div>
+          </div>
         </div>
       </div>
 
+      {/* 2. Schedule Item Cards */}
       {items.length === 0 ? (
-        <div className="p-8 text-center bg-white rounded-2xl border border-dashed border-slate-300 text-slate-500">
-          오늘 등록된 일정이 없습니다.
+        <div className="p-12 text-center bg-white rounded-3xl border border-dashed border-slate-300 text-slate-500 space-y-2">
+          <p className="text-base font-semibold text-slate-700">오늘 등록된 일정이 없습니다.</p>
+          <p className="text-xs text-slate-400">자유로운 하루를 즐겨보세요!</p>
         </div>
       ) : (
         <div className="space-y-3">
           {items.map((item) => {
             const cat = CATEGORIES[item.category] || CATEGORIES.study;
             const timeStr = formatTimeRange(item.startHour, item.startMinute, item.endHour, item.endMinute);
+            const isCheckable = store.isItemCheckable(item);
+            const isCompleted = store.isCompleted(item);
+            const isVerified = store.isParentVerified(item);
 
             return (
               <div
                 key={item.id}
-                className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 hover:shadow-md transition-shadow relative overflow-hidden"
+                className={`bg-white rounded-2xl p-4 sm:p-5 shadow-sm border transition-all relative overflow-hidden ${
+                  isCompleted
+                    ? 'border-slate-200 bg-slate-50/70 shadow-none'
+                    : 'border-slate-200 hover:shadow-md'
+                }`}
                 style={{ borderLeftWidth: '5px', borderLeftColor: cat.color }}
               >
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="text-xs font-bold px-2 py-0.5 rounded-full"
-                      style={{ color: cat.color, backgroundColor: cat.softBackgroundColor }}
-                    >
-                      {cat.title}
-                    </span>
-                    <div className="flex items-center gap-1 text-xs font-semibold text-slate-600 bg-slate-100 px-2.5 py-0.5 rounded-md">
-                      <Clock className="w-3.5 h-3.5 text-slate-500" />
-                      <span>{timeStr}</span>
-                    </div>
+                <div className="flex items-start gap-3.5">
+                  {/* Left Action: Checkbox / Seal / Category Badge */}
+                  <div className="pt-0.5 shrink-0">
+                    {isCheckable ? (
+                      <button
+                        type="button"
+                        data-testid={`item-check-btn-${item.id}`}
+                        aria-checked={isCompleted}
+                        data-verified={isVerified}
+                        onClick={() => handleItemToggle(item)}
+                        className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all ${
+                          isVerified
+                            ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20'
+                            : isCompleted
+                            ? 'bg-blue-600 text-white shadow-md shadow-blue-500/20'
+                            : 'border-2 border-slate-300 hover:border-blue-500 text-transparent hover:text-slate-300'
+                        }`}
+                        title={isVerified ? '부모 확인 완료 (보호됨)' : isCompleted ? '완료됨' : '다 했어요'}
+                      >
+                        {isVerified ? (
+                          <Award className="w-5 h-5 text-white" />
+                        ) : isCompleted ? (
+                          <CheckCircle2 className="w-5 h-5 text-white" />
+                        ) : (
+                          <Circle className="w-5 h-5" />
+                        )}
+                      </button>
+                    ) : (
+                      <div
+                        data-testid={`item-badge-${item.id}`}
+                        className="w-9 h-9 rounded-2xl flex items-center justify-center"
+                        style={{ backgroundColor: cat.softBackgroundColor }}
+                      >
+                        <Sparkles className="w-4 h-4" style={{ color: cat.color }} />
+                      </div>
+                    )}
                   </div>
 
-                  {item.isNotificationEnabled && (
-                    <div className="flex items-center gap-1 text-[11px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md self-start sm:self-auto">
-                      <Bell className="w-3 h-3 text-amber-500" />
-                      <span>알림</span>
-                    </div>
-                  )}
-                </div>
+                  {/* Right Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="text-[11px] font-bold px-2 py-0.5 rounded-full"
+                          style={{ color: cat.color, backgroundColor: cat.softBackgroundColor }}
+                        >
+                          {cat.title}
+                        </span>
+                        <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">
+                          <Clock className="w-3 h-3 text-slate-400" />
+                          <span>{timeStr}</span>
+                        </div>
+                      </div>
 
-                <div className="mt-2.5">
-                  <h3 className="text-base font-bold text-slate-900">{item.title}</h3>
-                  {item.note && <p className="text-xs text-slate-500 mt-0.5">{item.note}</p>}
-                </div>
+                      <div className="flex items-center gap-1.5">
+                        {isVerified && (
+                          <span className="flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                            <Award className="w-3 h-3 text-emerald-600" />
+                            <span>부모 확인 완료</span>
+                          </span>
+                        )}
 
-                {item.subTasks && item.subTasks.length > 0 && (
-                  <div className="mt-3 pt-2.5 border-t border-slate-100">
-                    <div className="flex items-center gap-1 text-xs font-semibold text-slate-600 mb-1.5">
-                      <ListChecks className="w-3.5 h-3.5 text-slate-400" />
-                      <span>세부 할 일</span>
+                        {item.isNotificationEnabled && (
+                          <div className="flex items-center gap-1 text-[11px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md">
+                            <Bell className="w-3 h-3 text-amber-500" />
+                            <span>알림</span>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <ul className="space-y-1 pl-1">
-                      {item.subTasks.map((sub) => (
-                        <li key={sub.id} className="text-xs text-slate-700 flex items-center gap-2">
-                          <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
-                          <span>{sub.title}</span>
-                        </li>
-                      ))}
-                    </ul>
+
+                    <div>
+                      <h3
+                        className={`text-base font-bold transition-colors ${
+                          isCompleted ? 'text-slate-400 line-through' : 'text-slate-900'
+                        }`}
+                      >
+                        {item.title}
+                      </h3>
+                      {item.note && (
+                        <p
+                          className={`text-xs mt-0.5 ${
+                            isCompleted ? 'text-slate-400 line-through' : 'text-slate-500'
+                          }`}
+                        >
+                          {item.note}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Subtasks Section */}
+                    {item.subTasks && item.subTasks.length > 0 && (
+                      <div className="mt-3 pt-2.5 border-t border-slate-100 space-y-1.5">
+                        <div className="flex items-center gap-1 text-xs font-semibold text-slate-600">
+                          <ListChecks className="w-3.5 h-3.5 text-slate-400" />
+                          <span>세부 할 일</span>
+                        </div>
+
+                        <div className="space-y-1 pl-1">
+                          {item.subTasks.map((sub) => {
+                            const subDone = store.isSubTaskCompleted(sub);
+                            const subVerified = store.isSubTaskParentVerified(sub);
+
+                            return (
+                              <div
+                                key={sub.id}
+                                className="flex items-center gap-2 group text-xs text-slate-700"
+                              >
+                                {isCheckable ? (
+                                  <button
+                                    type="button"
+                                    data-testid={`subtask-check-btn-${sub.id}`}
+                                    aria-checked={subDone}
+                                    data-verified={subVerified}
+                                    aria-label={
+                                      subVerified
+                                        ? `${sub.title} 부모 확인 완료`
+                                        : subDone
+                                        ? `${sub.title} 완료 취소`
+                                        : `${sub.title} 다 했어요`
+                                    }
+                                    title={
+                                      subVerified
+                                        ? '부모 확인 완료 (보호됨)'
+                                        : subDone
+                                        ? '완료 취소'
+                                        : '다 했어요'
+                                    }
+                                    onClick={() => handleSubTaskToggle(sub, item)}
+                                    className={`w-4 h-4 rounded flex items-center justify-center transition-all ${
+                                      subVerified
+                                        ? 'bg-emerald-600 text-white'
+                                        : subDone
+                                        ? 'bg-blue-600 text-white'
+                                        : 'border border-slate-300 hover:border-blue-500 text-transparent'
+                                    }`}
+                                  >
+                                    {subVerified || subDone ? (
+                                      <CheckSquare className="w-3.5 h-3.5" />
+                                    ) : (
+                                      <Square className="w-3.5 h-3.5" />
+                                    )}
+                                  </button>
+                                ) : (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+                                )}
+
+                                <span
+                                  className={`transition-colors ${
+                                    subDone ? 'text-slate-400 line-through' : 'text-slate-700 font-medium'
+                                  }`}
+                                >
+                                  {sub.title}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             );
           })}

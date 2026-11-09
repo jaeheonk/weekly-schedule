@@ -57,6 +57,7 @@ export const App: React.FC = () => {
           <TodayScheduleView
             items={todayItems}
             weekdayName={currentWeekdayInfo?.fullName || '오늘'}
+            store={globalScheduleStore}
           />
         ) : (
           <WeeklyGridView
