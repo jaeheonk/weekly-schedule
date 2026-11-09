@@ -13,25 +13,35 @@ import {
 } from '../types/snapshot';
 
 /**
+ * Generic helper to merge two dictionaries of timestamped entries.
+ * If a key exists in both, the entry with the larger updatedAt wins.
+ */
+export function mergeTimestampedDict<T extends { updatedAt: number }>(
+  local: Record<string, T> = {},
+  remote: Record<string, T> = {}
+): Record<string, T> {
+  const result: Record<string, T> = { ...local };
+  for (const [key, rVal] of Object.entries(remote)) {
+    const lVal = result[key];
+    if (lVal) {
+      if (rVal.updatedAt >= lVal.updatedAt) {
+        result[key] = rVal;
+      }
+    } else {
+      result[key] = rVal;
+    }
+  }
+  return result;
+}
+
+/**
  * Merge two timestamped flag dictionaries (completion flags / parent verified flags).
- * If a key exists in both, the flag with the larger updatedAt wins.
  */
 export function mergeFlagDict(
   local: Record<string, SyncTimestampedFlag> = {},
   remote: Record<string, SyncTimestampedFlag> = {}
 ): Record<string, SyncTimestampedFlag> {
-  const result: Record<string, SyncTimestampedFlag> = { ...local };
-  for (const [key, rFlag] of Object.entries(remote)) {
-    const lFlag = result[key];
-    if (lFlag) {
-      if (rFlag.updatedAt >= lFlag.updatedAt) {
-        result[key] = rFlag;
-      }
-    } else {
-      result[key] = rFlag;
-    }
-  }
-  return result;
+  return mergeTimestampedDict(local, remote);
 }
 
 /**
@@ -72,10 +82,10 @@ export function mergeScheduleItems(
   // Deduplicate by signature
   const dedupMap = new Map<string, ScheduleItem>();
   for (const item of activeItems) {
-    const sig = `${item.weekday}_${item.startHour}:${item.startMinute}_${item.endHour}:${item.endMinute}_${item.title}_${item.targetWeekKey || ''}`;
-    const existing = dedupMap.get(sig);
+    const itemSignature = `${item.weekday}_${item.startHour}:${item.startMinute}_${item.endHour}:${item.endMinute}_${item.title}_${item.targetWeekKey || ''}`;
+    const existing = dedupMap.get(itemSignature);
     if (!existing || item.updatedAt > existing.updatedAt) {
-      dedupMap.set(sig, item);
+      dedupMap.set(itemSignature, item);
     }
   }
 
@@ -93,18 +103,7 @@ export function mergeWeeklyOverrides(
   local: Record<string, WeeklyItemOverride> = {},
   remote: Record<string, WeeklyItemOverride> = {}
 ): Record<string, WeeklyItemOverride> {
-  const result: Record<string, WeeklyItemOverride> = { ...local };
-  for (const [key, rOv] of Object.entries(remote)) {
-    const lOv = result[key];
-    if (lOv) {
-      if (rOv.updatedAt >= lOv.updatedAt) {
-        result[key] = rOv;
-      }
-    } else {
-      result[key] = rOv;
-    }
-  }
-  return result;
+  return mergeTimestampedDict(local, remote);
 }
 
 export function mergeItemReactions(
@@ -210,12 +209,15 @@ export function mergeStarRedemptionRequests(
     .slice(0, 100);
 }
 
-export function mergeRewardPresets(
-  local: RewardPreset[] = [],
-  remote: RewardPreset[] = [],
+/**
+ * Generic helper to merge preset models with ID and deletion filtering.
+ */
+export function mergePresets<T extends { id: string; updatedAt: number }>(
+  local: T[] = [],
+  remote: T[] = [],
   deletedTimestamps: Record<string, number> = {}
-): RewardPreset[] {
-  const byId = new Map<string, RewardPreset>();
+): T[] {
+  const byId = new Map<string, T>();
 
   for (const preset of [...local, ...remote]) {
     const existing = byId.get(preset.id);
@@ -234,28 +236,20 @@ export function mergeRewardPresets(
   });
 }
 
+export function mergeRewardPresets(
+  local: RewardPreset[] = [],
+  remote: RewardPreset[] = [],
+  deletedTimestamps: Record<string, number> = {}
+): RewardPreset[] {
+  return mergePresets(local, remote, deletedTimestamps);
+}
+
 export function mergeStarRewardPresets(
   local: StarRewardPreset[] = [],
   remote: StarRewardPreset[] = [],
   deletedTimestamps: Record<string, number> = {}
 ): StarRewardPreset[] {
-  const byId = new Map<string, StarRewardPreset>();
-
-  for (const preset of [...local, ...remote]) {
-    const existing = byId.get(preset.id);
-    if (existing) {
-      if (preset.updatedAt > existing.updatedAt) {
-        byId.set(preset.id, preset);
-      }
-    } else {
-      byId.set(preset.id, preset);
-    }
-  }
-
-  return Array.from(byId.values()).filter((p) => {
-    const delTs = deletedTimestamps[p.id] ?? 0;
-    return delTs < p.updatedAt;
-  });
+  return mergePresets(local, remote, deletedTimestamps);
 }
 
 /**

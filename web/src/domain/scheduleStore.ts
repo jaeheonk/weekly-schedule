@@ -24,6 +24,8 @@ import { getMasterScheduleItems } from './defaultSchedule';
 import { mergeSnapshots } from './snapshotMerge';
 import { DEFAULT_VERCEL_BLOB_TOKEN, DEFAULT_FAMILY_CODE } from '../services/vercelBlobSync';
 
+export const currentEpochSeconds = (): number => Date.now() / 1000;
+
 export const STORAGE_KEYS = {
   ITEMS: 'weekly_schedule_items',
   COMPLETED_ITEMS: 'weekly_schedule_completed_items_v1',
@@ -135,14 +137,14 @@ export class ScheduleStore {
 
   private loadSyncConfig(): void {
     try {
-      const fc = localStorage.getItem(STORAGE_KEYS.FAMILY_CODE);
-      if (fc) this.familyCode = fc;
-      const tok = localStorage.getItem(STORAGE_KEYS.BLOB_TOKEN);
-      if (tok) this.blobToken = tok;
-      const pin = localStorage.getItem(STORAGE_KEYS.PARENT_PIN);
-      if (pin) this.parentPinCode = pin;
-      const pinTs = localStorage.getItem(STORAGE_KEYS.PARENT_PIN_UPDATED_AT);
-      if (pinTs) this.parentPinUpdatedAt = parseFloat(pinTs) || 1700000000;
+      const storedFamilyCode = localStorage.getItem(STORAGE_KEYS.FAMILY_CODE);
+      if (storedFamilyCode) this.familyCode = storedFamilyCode;
+      const storedBlobToken = localStorage.getItem(STORAGE_KEYS.BLOB_TOKEN);
+      if (storedBlobToken) this.blobToken = storedBlobToken;
+      const storedPin = localStorage.getItem(STORAGE_KEYS.PARENT_PIN);
+      if (storedPin) this.parentPinCode = storedPin;
+      const storedPinTimestamp = localStorage.getItem(STORAGE_KEYS.PARENT_PIN_UPDATED_AT);
+      if (storedPinTimestamp) this.parentPinUpdatedAt = parseFloat(storedPinTimestamp) || 1700000000;
     } catch {
       // ignore
     }

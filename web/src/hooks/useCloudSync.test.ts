@@ -34,16 +34,53 @@ describe('useCloudSync Hook', () => {
       pathname: 'families/family-main/state-2.json',
     });
 
-    const { result } = renderHook(() => useCloudSync({ store, syncService, pollingIntervalMs: 0 }));
+    const { result } = renderHook(() =>
+      useCloudSync({ store, syncService, pollingIntervalMs: 0, syncOnMount: false })
+    );
 
     await act(async () => {
-      await result.current.triggerSync();
+      await result.current.triggerSync({ isManual: true });
     });
 
     expect(result.current.syncStatus).toBe('success');
     expect(result.current.toastMessage).toContain('동기화 완료');
     expect(store.getParentPinCode()).toBe('888888');
     expect(uploadSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows incoming praise card toast when remote changes arrive from another device', async () => {
+    const mockRemoteSnapshot = store.makeCurrentSnapshot();
+    mockRemoteSnapshot.updatedByDeviceId = 'other-device-iphone';
+    mockRemoteSnapshot.praiseNotes = [
+      {
+        id: 'praise-1',
+        hearts: 5,
+        sticker: 'heart',
+        message: '오늘 하루도 최고야!',
+        createdAt: Date.now() / 1000,
+      },
+    ];
+
+    vi.spyOn(syncService, 'fetchLatestBlobMetadata').mockResolvedValue({
+      latest: { url: 'https://blob.test/state-new.json', pathname: 'families/family-main/state-new.json' },
+      allBlobs: [],
+    });
+    vi.spyOn(syncService, 'downloadSnapshot').mockResolvedValue(mockRemoteSnapshot);
+    vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({
+      url: 'https://blob.test/state-put.json',
+      pathname: 'families/family-main/state-put.json',
+    });
+
+    const { result } = renderHook(() =>
+      useCloudSync({ store, syncService, pollingIntervalMs: 0, syncOnMount: false })
+    );
+
+    await act(async () => {
+      await result.current.triggerSync({ isManual: false });
+    });
+
+    expect(result.current.syncStatus).toBe('success');
+    expect(result.current.toastMessage).toContain('부모님이 칭찬 응원 카드를 보내주셨어요');
   });
 
   it('handles sync error gracefully and displays error toast', async () => {

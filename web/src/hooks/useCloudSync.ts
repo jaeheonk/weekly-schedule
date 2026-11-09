@@ -23,6 +23,10 @@ export function useCloudSync({
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   const isSyncingRef = useRef(false);
+  const lastSyncedBlobPathnameRef = useRef<string | null>(null);
+  const isDirtyRef = useRef(false);
+  const isApplyingRemoteRef = useRef(false);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearToast = useCallback(() => {
@@ -46,14 +50,14 @@ export function useCloudSync({
   }, []);
 
   const triggerSync = useCallback(
-    async (options: { isManual?: boolean } = {}) => {
+    async (options: { isManual?: boolean; forceUpload?: boolean } = {}) => {
       if (isSyncingRef.current) {
         return;
       }
 
       isSyncingRef.current = true;
-      setSyncStatus('syncing');
       if (options.isManual) {
+        setSyncStatus('syncing');
         setToastMessage('클라우드 동기화 중...');
       }
 
@@ -68,25 +72,89 @@ export function useCloudSync({
           familyCode
         );
 
-        // 2. Download and merge remote snapshot if one exists
-        if (latest) {
-          const remote = await syncService.downloadSnapshot(latest.url, token);
-          store.applyMergedRemoteSnapshot(remote);
+        // If background polling and remote hasn't changed and local is clean, skip work
+        if (
+          !options.isManual &&
+          !options.forceUpload &&
+          !isDirtyRef.current &&
+          latest &&
+          latest.pathname === lastSyncedBlobPathnameRef.current
+        ) {
+          return;
         }
 
-        // 3. Upload merged current snapshot to cloud
-        const currentSnapshot = store.makeCurrentSnapshot();
-        await syncService.uploadSnapshot(currentSnapshot, {
-          token,
-          familyCode,
-          shortDeviceId: deviceId,
-          previousBlobsToDelete: allBlobs,
-        });
+        let eventToastMessage: string | null = null;
+
+        // 2. Download and merge remote snapshot if there is a new remote snapshot
+        if (latest && latest.pathname !== lastSyncedBlobPathnameRef.current) {
+          const remote = await syncService.downloadSnapshot(latest.url, token);
+
+          const localBefore = store.makeCurrentSnapshot();
+          const prevPraiseCount = localBefore.praiseNotes.length;
+          const prevVerifiedCount = Object.values(localBefore.parentVerifiedFlags).filter(
+            (f) => f.isSet
+          ).length;
+
+          isApplyingRemoteRef.current = true;
+          try {
+            store.applyMergedRemoteSnapshot(remote);
+          } finally {
+            isApplyingRemoteRef.current = false;
+          }
+
+          lastSyncedBlobPathnameRef.current = latest.pathname;
+
+          // Detect incoming remote events if updated by another device
+          if (remote.updatedByDeviceId && remote.updatedByDeviceId !== deviceId) {
+            const newPraiseCount = remote.praiseNotes.length;
+            const newVerifiedCount = Object.values(remote.parentVerifiedFlags).filter(
+              (f) => f.isSet
+            ).length;
+
+            if (newPraiseCount > prevPraiseCount) {
+              eventToastMessage = '❤️ 부모님이 칭찬 응원 카드를 보내주셨어요!';
+            } else if (newVerifiedCount > prevVerifiedCount) {
+              const diff = newVerifiedCount - prevVerifiedCount;
+              eventToastMessage = `✅ 부모님이 숙제 ${diff}개에 확인 도장을 찍어주셨어요!`;
+            }
+          }
+        }
+
+        // 3. Upload merged current snapshot if dirty, forceUpload, or no remote snapshot yet
+        const shouldUpload =
+          isDirtyRef.current ||
+          options.forceUpload ||
+          !latest ||
+          options.isManual;
+
+        if (shouldUpload) {
+          const currentSnapshot = store.makeCurrentSnapshot();
+          const putResult = await syncService.uploadSnapshot(currentSnapshot, {
+            token,
+            familyCode,
+            shortDeviceId: deviceId,
+            previousBlobsToDelete: allBlobs,
+          });
+
+          lastSyncedBlobPathnameRef.current = putResult.pathname;
+          isDirtyRef.current = false;
+        }
 
         setLastSyncedAt(new Date());
-        setSyncStatus('success');
-        setToastMessage('클라우드 동기화 완료');
-        scheduleToastDismiss(3500);
+
+        if (eventToastMessage) {
+          setSyncStatus('success');
+          setToastMessage(eventToastMessage);
+          scheduleToastDismiss(4000);
+        } else if (options.isManual) {
+          setSyncStatus('success');
+          setToastMessage('클라우드 동기화 완료');
+          scheduleToastDismiss(3500);
+        } else {
+          // Quiet background sync: no intrusive toast
+          setSyncStatus('idle');
+          setToastMessage(null);
+        }
       } catch (err) {
         const errorMsg =
           err instanceof Error ? err.message : '동기화 중 오류가 발생했습니다.';
@@ -99,6 +167,30 @@ export function useCloudSync({
     },
     [store, syncService, scheduleToastDismiss]
   );
+
+  // Debounced auto-upload on local store mutations
+  useEffect(() => {
+    const unsubscribe = store.subscribe(() => {
+      if (isApplyingRemoteRef.current) return;
+      isDirtyRef.current = true;
+
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      debounceTimerRef.current = setTimeout(() => {
+        if (isDirtyRef.current) {
+          triggerSync({ isManual: false, forceUpload: true });
+        }
+      }, 1500);
+    });
+
+    return () => {
+      unsubscribe();
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+    };
+  }, [store, triggerSync]);
 
   // Keyboard shortcut: Cmd+R / Ctrl+R triggers manual sync
   useEffect(() => {
