@@ -1,5 +1,14 @@
 import React from 'react';
-import { Calendar, CheckSquare, Grid, RefreshCw } from 'lucide-react';
+import {
+  Calendar,
+  CheckSquare,
+  Grid,
+  RefreshCw,
+  Lock,
+  Unlock,
+  ShieldCheck,
+  Heart,
+} from 'lucide-react';
 import { getWeekdayNumber, getWeekKey } from '../domain/calendarUtils';
 import { WEEKDAYS } from '../types/schedule';
 
@@ -9,6 +18,10 @@ export interface NavigationProps {
   currentDate?: Date;
   isSyncing?: boolean;
   onSync?: () => void;
+  isParentMode?: boolean;
+  onOpenParentPin?: () => void;
+  onLockParentMode?: () => void;
+  availableHearts?: number;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -17,6 +30,10 @@ export const Navigation: React.FC<NavigationProps> = ({
   currentDate = new Date(),
   isSyncing = false,
   onSync,
+  isParentMode = false,
+  onOpenParentPin,
+  onLockParentMode,
+  availableHearts = 0,
 }) => {
   const weekdayNum = getWeekdayNumber(currentDate);
   const weekdayInfo = WEEKDAYS.find((w) => w.number === weekdayNum);
@@ -46,6 +63,17 @@ export const Navigation: React.FC<NavigationProps> = ({
               <span className="text-blue-600 font-bold">{weekKey}</span>
             </div>
 
+            {availableHearts > 0 && (
+              <div
+                data-testid="header-hearts-badge"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-pink-50 text-pink-700 text-xs font-bold border border-pink-200/80 shadow-sm"
+                title={`보유 하트: ${availableHearts}개`}
+              >
+                <Heart className="w-3.5 h-3.5 fill-rose-500 text-rose-500" />
+                <span>{availableHearts}</span>
+              </div>
+            )}
+
             {onSync && (
               <button
                 type="button"
@@ -63,6 +91,44 @@ export const Navigation: React.FC<NavigationProps> = ({
                 />
                 <span className="hidden md:inline">{isSyncing ? '동기화 중' : '동기화'}</span>
               </button>
+            )}
+
+            {/* Mode Switcher */}
+            {isParentMode ? (
+              <div className="flex items-center gap-1">
+                <span
+                  data-testid="parent-mode-indicator"
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-indigo-600 text-white text-xs font-bold shadow-sm"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>부모 모드</span>
+                </span>
+                {onLockParentMode && (
+                  <button
+                    type="button"
+                    onClick={onLockParentMode}
+                    data-testid="mode-lock-button"
+                    title="아이 모드로 전환 (잠금)"
+                    className="flex items-center gap-1 px-2 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-semibold border border-slate-200 transition-colors"
+                  >
+                    <Unlock className="w-3 h-3 text-slate-500" />
+                    <span className="hidden sm:inline">잠금</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              onOpenParentPin && (
+                <button
+                  type="button"
+                  onClick={onOpenParentPin}
+                  data-testid="mode-switch-button"
+                  title="부모 모드로 전환 (6자리 PIN)"
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-50 hover:bg-indigo-100 active:bg-indigo-200 text-indigo-700 text-xs font-bold border border-indigo-200/80 transition-colors shadow-sm"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  <span>부모 모드</span>
+                </button>
+              )
             )}
           </div>
         </div>

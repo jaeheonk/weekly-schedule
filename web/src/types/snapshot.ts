@@ -34,6 +34,30 @@ export interface WeeklyItemOverride {
 
 export type ReactionSticker = 'heart' | 'star' | 'thumbsUp' | 'clap' | 'fire' | 'crown';
 
+export interface StickerOption {
+  key: ReactionSticker;
+  emoji: string;
+  label: string;
+}
+
+export const STICKER_OPTIONS: StickerOption[] = [
+  { key: 'heart', emoji: '❤️', label: '사랑해 하트' },
+  { key: 'star', emoji: '⭐', label: '최고예요' },
+  { key: 'thumbsUp', emoji: '👍', label: '엄지척 멋져요' },
+  { key: 'clap', emoji: '👏', label: '참 잘했어요' },
+  { key: 'fire', emoji: '🔥', label: '끝까지 화이팅' },
+  { key: 'crown', emoji: '👑', label: '오늘의 챔피언' },
+];
+
+export const STICKER_EMOJIS: Record<ReactionSticker, string> = {
+  heart: '❤️',
+  star: '⭐',
+  thumbsUp: '👍',
+  clap: '👏',
+  fire: '🔥',
+  crown: '👑',
+};
+
 export interface ScheduleItemComment {
   id: string;
   text: string;

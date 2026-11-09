@@ -2,11 +2,14 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import App from './App';
 import { VercelBlobSyncService } from './services/vercelBlobSync';
+import { globalScheduleStore } from './domain/scheduleStore';
 
 describe('App & Hash Navigation (Seam 2)', () => {
   beforeEach(() => {
     window.location.hash = '';
     localStorage.clear();
+    sessionStorage.clear();
+    globalScheduleStore.reloadFromStorage();
     vi.spyOn(VercelBlobSyncService.prototype, 'fetchLatestBlobMetadata').mockResolvedValue({
       latest: null,
       allBlobs: [],
@@ -113,5 +116,70 @@ describe('App & Hash Navigation (Seam 2)', () => {
     // Toast banner appears
     const toast = await screen.findByTestId('sync-toast');
     expect(toast).toBeInTheDocument();
+  });
+
+  describe('Parent Mode PIN Authentication & Stamps Integration (Seam 4 / Issue 04)', () => {
+    it('opens Parent PIN modal, switches to parent mode upon entering correct PIN, stamps item and locks back', async () => {
+      render(<App syncOnMount={false} />);
+
+      // Child completes the first checkable item
+      const checkBtns = screen.getAllByRole('button', { name: /다 했어요|완료됨/i });
+      expect(checkBtns.length).toBeGreaterThan(0);
+      fireEvent.click(checkBtns[0]);
+
+      // Initially in child mode, switch button is in header
+      const modeSwitchBtn = screen.getByTestId('mode-switch-button');
+      expect(modeSwitchBtn).toBeInTheDocument();
+
+      // Click to open PIN modal
+      fireEvent.click(modeSwitchBtn);
+
+      const modal = screen.getByTestId('parent-pin-modal');
+      expect(modal).toBeInTheDocument();
+
+      // Enter correct PIN: 160125
+      const digits = ['1', '6', '0', '1', '2', '5'];
+      for (const d of digits) {
+        fireEvent.click(screen.getByTestId(`keypad-btn-${d}`));
+      }
+
+      // Modal closes, header shows parent mode indicator and lock button
+      await waitFor(() => {
+        expect(screen.queryByTestId('parent-pin-modal')).not.toBeInTheDocument();
+      });
+      expect(screen.getByTestId('parent-mode-indicator')).toBeInTheDocument();
+      expect(screen.getByTestId('mode-lock-button')).toBeInTheDocument();
+
+      // Today view now shows stamp buttons
+      const stampBtns = screen.getAllByTestId(/^item-parent-stamp-btn-/);
+      expect(stampBtns.length).toBeGreaterThan(0);
+
+      // Stamp the first item
+      fireEvent.click(stampBtns[0]);
+      expect(stampBtns[0]).toHaveTextContent(/참 잘했어요 도장 날인됨/);
+
+      // Send cheer heart to first item
+      const praiseBtns = screen.getAllByTestId(/^item-praise-btn-/);
+      expect(praiseBtns.length).toBeGreaterThan(0);
+      fireEvent.click(praiseBtns[0]);
+
+      // Praise modal opens
+      expect(screen.getByTestId('praise-heart-modal')).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('heart-preset-5'));
+      fireEvent.click(screen.getByTestId('send-praise-btn'));
+
+      // Praise modal closes, header hearts badge shows +5
+      await waitFor(() => {
+        expect(screen.queryByTestId('praise-heart-modal')).not.toBeInTheDocument();
+      });
+      expect(screen.getByTestId('header-hearts-badge')).toHaveTextContent('5');
+
+      // Click lock button to return to child mode
+      const lockBtn = screen.getByTestId('mode-lock-button');
+      fireEvent.click(lockBtn);
+
+      expect(screen.getByTestId('mode-switch-button')).toBeInTheDocument();
+      expect(screen.queryByTestId('parent-mode-indicator')).not.toBeInTheDocument();
+    });
   });
 });

@@ -11,6 +11,7 @@ import {
   CloudSyncSnapshot,
   SyncTimestampedFlag,
   WeeklyItemOverride,
+  ReactionSticker,
   ItemParentReaction,
   ParentPraiseNote,
   HeartRewardRedemption,
@@ -25,6 +26,17 @@ import { mergeSnapshots } from './snapshotMerge';
 import { DEFAULT_VERCEL_BLOB_TOKEN, DEFAULT_FAMILY_CODE } from '../services/vercelBlobSync';
 
 export const currentEpochSeconds = (): number => Date.now() / 1000;
+
+export const SESSION_KEYS = {
+  PARENT_MODE_UNLOCKED: 'weekly_schedule_parent_mode_unlocked_v1',
+} as const;
+
+export function generateEntityId(prefix: string): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+}
 
 export const STORAGE_KEYS = {
   ITEMS: 'weekly_schedule_items',
@@ -42,6 +54,8 @@ export const STORAGE_KEYS = {
   BLOB_TOKEN: 'weekly_schedule_blob_token_v1',
   PARENT_PIN: 'weekly_schedule_parent_pin_v1',
   PARENT_PIN_UPDATED_AT: 'weekly_schedule_parent_pin_updated_at_v1',
+  PIN_FAILED_ATTEMPTS: 'weekly_schedule_pin_failed_attempts_v1',
+  PIN_LOCKOUT_UNTIL: 'weekly_schedule_pin_lockout_until_v1',
   SNAPSHOT_STATE: 'weekly_schedule_cloud_snapshot_state_v1',
 } as const;
 
@@ -65,6 +79,11 @@ export class ScheduleStore {
   private parentVerifiedItemKeys: Set<string> = new Set();
   private parentVerifiedSubTaskKeys: Set<string> = new Set();
   private deviceRole: DeviceRole = 'child';
+
+  // PIN security and Parent Mode session
+  private failedPinAttempts: number = 0;
+  private pinLockoutUntil: number | null = null;
+  private isParentModeUnlocked: boolean = false;
 
   // CloudSyncSnapshot fields
   private familyCode: string = DEFAULT_FAMILY_CODE;
@@ -100,6 +119,7 @@ export class ScheduleStore {
     this.loadInitialItems();
     this.loadCompletions();
     this.loadDeviceRole();
+    this.loadPinSecurityState();
     this.loadSnapshotMeta();
   }
 
@@ -365,6 +385,18 @@ export class ScheduleStore {
       if (stored === 'parent' || stored === 'child') {
         this.deviceRole = stored;
       }
+      const sessionUnlocked = sessionStorage.getItem(SESSION_KEYS.PARENT_MODE_UNLOCKED);
+      if (sessionUnlocked === 'true' || this.deviceRole === 'parent') {
+        this.isParentModeUnlocked = true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  private saveDeviceRole(): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.DEVICE_ROLE, this.deviceRole);
     } catch {
       // ignore
     }
@@ -376,12 +408,161 @@ export class ScheduleStore {
 
   public setDeviceRole(role: DeviceRole): void {
     this.deviceRole = role;
+    this.saveDeviceRole();
+    if (role === 'parent') {
+      this.isParentModeUnlocked = true;
+      try {
+        sessionStorage.setItem(SESSION_KEYS.PARENT_MODE_UNLOCKED, 'true');
+      } catch {
+        // ignore
+      }
+    } else {
+      this.isParentModeUnlocked = false;
+      try {
+        sessionStorage.removeItem(SESSION_KEYS.PARENT_MODE_UNLOCKED);
+      } catch {
+        // ignore
+      }
+    }
+    this.notify();
+  }
+
+  private loadPinSecurityState(): void {
     try {
-      localStorage.setItem(STORAGE_KEYS.DEVICE_ROLE, role);
+      const attemptsStr = localStorage.getItem(STORAGE_KEYS.PIN_FAILED_ATTEMPTS);
+      if (attemptsStr) {
+        this.failedPinAttempts = parseInt(attemptsStr, 10) || 0;
+      }
+      const lockoutStr = localStorage.getItem(STORAGE_KEYS.PIN_LOCKOUT_UNTIL);
+      if (lockoutStr) {
+        const lockoutUntil = parseFloat(lockoutStr);
+        if (lockoutUntil && Date.now() < lockoutUntil) {
+          this.pinLockoutUntil = lockoutUntil;
+        } else {
+          this.pinLockoutUntil = null;
+          try {
+            localStorage.removeItem(STORAGE_KEYS.PIN_LOCKOUT_UNTIL);
+          } catch {
+            // ignore
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  private savePinSecurityState(): void {
+    try {
+      localStorage.setItem(
+        STORAGE_KEYS.PIN_FAILED_ATTEMPTS,
+        this.failedPinAttempts.toString()
+      );
+      if (this.pinLockoutUntil !== null) {
+        localStorage.setItem(
+          STORAGE_KEYS.PIN_LOCKOUT_UNTIL,
+          this.pinLockoutUntil.toString()
+        );
+      } else {
+        localStorage.removeItem(STORAGE_KEYS.PIN_LOCKOUT_UNTIL);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  public isPinLockedOut(): boolean {
+    if (this.pinLockoutUntil === null) return false;
+    if (Date.now() >= this.pinLockoutUntil) {
+      this.pinLockoutUntil = null;
+      try {
+        localStorage.removeItem(STORAGE_KEYS.PIN_LOCKOUT_UNTIL);
+      } catch {
+        // ignore
+      }
+      return false;
+    }
+    return true;
+  }
+
+  public getRemainingLockoutSeconds(): number {
+    if (!this.isPinLockedOut() || this.pinLockoutUntil === null) {
+      return 0;
+    }
+    return Math.max(0, Math.ceil((this.pinLockoutUntil - Date.now()) / 1000));
+  }
+
+  public getFailedPinAttempts(): number {
+    return this.failedPinAttempts;
+  }
+
+  public resetPinLockout(): void {
+    this.failedPinAttempts = 0;
+    this.pinLockoutUntil = null;
+    this.savePinSecurityState();
+    this.notify();
+  }
+
+  public verifyParentPin(inputPin: string): boolean {
+    if (this.isPinLockedOut()) {
+      return false;
+    }
+
+    const cleanInput = inputPin.replace(/\D/g, '');
+    if (cleanInput.length === 6 && cleanInput === this.parentPinCode) {
+      this.resetPinLockout();
+      this.unlockParentMode();
+      return true;
+    } else {
+      this.recordFailedPinAttempt();
+      return false;
+    }
+  }
+
+  private recordFailedPinAttempt(): void {
+    this.failedPinAttempts += 1;
+    if (this.failedPinAttempts >= 5 && this.failedPinAttempts % 5 === 0) {
+      const lockSeconds = this.failedPinAttempts >= 10 ? 300 : 60;
+      this.pinLockoutUntil = Date.now() + lockSeconds * 1000;
+    }
+    this.savePinSecurityState();
+    this.notify();
+  }
+
+  public unlockParentMode(): void {
+    this.isParentModeUnlocked = true;
+    this.deviceRole = 'parent';
+    try {
+      sessionStorage.setItem(SESSION_KEYS.PARENT_MODE_UNLOCKED, 'true');
     } catch {
       // ignore
     }
     this.notify();
+  }
+
+  public lockParentMode(): void {
+    this.isParentModeUnlocked = false;
+    this.deviceRole = 'child';
+    this.saveDeviceRole();
+    try {
+      sessionStorage.removeItem(SESSION_KEYS.PARENT_MODE_UNLOCKED);
+    } catch {
+      // ignore
+    }
+    this.notify();
+  }
+
+  public reloadFromStorage(): void {
+    this.loadInitialItems();
+    this.loadCompletions();
+    this.loadDeviceRole();
+    this.loadPinSecurityState();
+    this.loadSnapshotMeta();
+    this.notify();
+  }
+
+  public isParentMode(): boolean {
+    return this.deviceRole === 'parent' || this.isParentModeUnlocked;
   }
 
   private loadSnapshotMeta(): void {
@@ -678,6 +859,201 @@ export class ScheduleStore {
 
     this.refreshFlagSetsFromDictionaries();
     this.saveCompletions();
+  }
+
+  public canParentVerify(item: ScheduleItem, weekKey?: WeekKey): boolean {
+    return (
+      this.isItemCheckable(item) &&
+      this.isCompleted(item, weekKey) &&
+      !this.isParentVerified(item, weekKey)
+    );
+  }
+
+  public canParentVerifySubTask(subTask: SubTask, weekKey?: WeekKey): boolean {
+    return (
+      this.isSubTaskCompleted(subTask, weekKey) &&
+      !this.isSubTaskParentVerified(subTask, weekKey)
+    );
+  }
+
+  public toggleParentVerification(item: ScheduleItem, weekKey?: WeekKey): boolean {
+    if (!this.isItemCheckable(item)) return false;
+    const key = this.itemKey(item.id, weekKey);
+    const now = Date.now() / 1000;
+
+    if (this.isParentVerified(item, weekKey)) {
+      this.parentVerifiedFlags[key] = { isSet: false, updatedAt: now };
+      for (const sub of item.subTasks) {
+        const sKey = this.subTaskKey(sub.id, weekKey);
+        this.parentVerifiedSubTaskFlags[sKey] = { isSet: false, updatedAt: now };
+      }
+      this.refreshFlagSetsFromDictionaries();
+      this.saveCompletions();
+      return true;
+    }
+
+    if (!this.canParentVerify(item, weekKey)) {
+      return false;
+    }
+
+    this.completedItemKeys.add(key);
+    this.completionFlags[key] = { isSet: true, updatedAt: now };
+    this.parentVerifiedFlags[key] = { isSet: true, updatedAt: now };
+    for (const sub of item.subTasks) {
+      const sKey = this.subTaskKey(sub.id, weekKey);
+      this.completedSubTaskKeys.add(sKey);
+      this.subTaskCompletionFlags[sKey] = { isSet: true, updatedAt: now };
+      this.parentVerifiedSubTaskFlags[sKey] = { isSet: true, updatedAt: now };
+    }
+
+    this.refreshFlagSetsFromDictionaries();
+    this.saveCompletions();
+    return true;
+  }
+
+  public toggleSubTaskParentVerification(
+    subTask: SubTask,
+    parentItem: ScheduleItem,
+    weekKey?: WeekKey
+  ): boolean {
+    if (!this.isItemCheckable(parentItem)) return false;
+    const sKey = this.subTaskKey(subTask.id, weekKey);
+    const pKey = this.itemKey(parentItem.id, weekKey);
+    const now = Date.now() / 1000;
+
+    if (this.isSubTaskParentVerified(subTask, weekKey)) {
+      this.parentVerifiedSubTaskFlags[sKey] = { isSet: false, updatedAt: now };
+      this.parentVerifiedFlags[pKey] = { isSet: false, updatedAt: now };
+      this.refreshFlagSetsFromDictionaries();
+      this.saveCompletions();
+      return true;
+    }
+
+    if (!this.canParentVerifySubTask(subTask, weekKey)) {
+      return false;
+    }
+
+    this.completedSubTaskKeys.add(sKey);
+    this.subTaskCompletionFlags[sKey] = { isSet: true, updatedAt: now };
+    this.parentVerifiedSubTaskFlags[sKey] = { isSet: true, updatedAt: now };
+
+    if (parentItem.subTasks.length > 0) {
+      const allVerified = parentItem.subTasks.every((s) => {
+        const flag = this.parentVerifiedSubTaskFlags[this.subTaskKey(s.id, weekKey)];
+        return flag ? flag.isSet : false;
+      });
+      if (allVerified) {
+        this.completedItemKeys.add(pKey);
+        this.completionFlags[pKey] = { isSet: true, updatedAt: now };
+        this.parentVerifiedFlags[pKey] = { isSet: true, updatedAt: now };
+      }
+    }
+
+    this.refreshFlagSetsFromDictionaries();
+    this.saveCompletions();
+    return true;
+  }
+
+  public sendItemReaction(options: {
+    item: ScheduleItem;
+    addHearts: number;
+    sticker: ReactionSticker;
+    comment?: string;
+    alsoVerify?: boolean;
+    weekKey?: WeekKey;
+  }): void {
+    const key = this.itemKey(options.item.id, options.weekKey);
+    const now = Date.now() / 1000;
+    const cleanComment = (options.comment || '').trim();
+
+    const current: ItemParentReaction = this.itemReactions[key]
+      ? { ...this.itemReactions[key] }
+      : {
+          itemKey: key,
+          heartCount: 0,
+          sticker: options.sticker,
+          comment: '',
+          comments: [],
+          updatedAt: now,
+        };
+
+    current.heartCount = Math.max(
+      0,
+      (current.heartCount || 0) + Math.max(0, options.addHearts)
+    );
+    current.sticker = options.sticker;
+    if (cleanComment.length > 0) {
+      current.comment = cleanComment;
+      const existingComments = current.comments ? [...current.comments] : [];
+      existingComments.push({
+        id: generateEntityId('cmt'),
+        text: cleanComment,
+        createdAt: now,
+      });
+      current.comments = existingComments;
+    }
+    current.updatedAt = now;
+    this.itemReactions[key] = current;
+
+    if (options.alsoVerify && !this.isParentVerified(options.item, options.weekKey)) {
+      this.toggleParentVerification(options.item, options.weekKey);
+    }
+
+    this.saveSnapshotMeta();
+    this.notify();
+  }
+
+  public getItemReaction(
+    item: ScheduleItem,
+    weekKey?: WeekKey
+  ): ItemParentReaction | undefined {
+    const key = this.itemKey(item.id, weekKey);
+    return this.itemReactions[key];
+  }
+
+  public sendFamilyPraise(options: {
+    hearts: number;
+    sticker: ReactionSticker;
+    message: string;
+  }): void {
+    const now = Date.now() / 1000;
+    const cleanMsg = options.message.trim();
+    const note: ParentPraiseNote = {
+      id: generateEntityId('praise'),
+      hearts: Math.max(0, options.hearts),
+      sticker: options.sticker,
+      message: cleanMsg.length > 0 ? cleanMsg : '엄마 아빠가 항상 응원해 ❤️',
+      createdAt: now,
+    };
+
+    this.praiseNotes.unshift(note);
+    if (this.praiseNotes.length > 40) {
+      const overflow = this.praiseNotes.slice(40);
+      this.archivedEarnedHearts += overflow.reduce((sum, n) => sum + n.hearts, 0);
+      this.praiseNotes = this.praiseNotes.slice(0, 40);
+    }
+    this.saveSnapshotMeta();
+    this.notify();
+  }
+
+  public getPraiseNotes(): ParentPraiseNote[] {
+    return [...this.praiseNotes];
+  }
+
+  public getLatestPraiseNote(): ParentPraiseNote | undefined {
+    if (this.praiseNotes.length === 0) return undefined;
+    return [...this.praiseNotes].sort((a, b) => b.createdAt - a.createdAt)[0];
+  }
+
+  public getAvailableHearts(): number {
+    const itemHeartSum = Object.values(this.itemReactions).reduce(
+      (acc, r) => acc + (r.heartCount || 0),
+      0
+    );
+    const noteHeartSum = this.praiseNotes.reduce((acc, n) => acc + (n.hearts || 0), 0);
+    const totalEarned = itemHeartSum + noteHeartSum + this.archivedEarnedHearts;
+    const totalSpent = this.rewardRedemptions.reduce((acc, r) => acc + (r.hearts || 0), 0);
+    return Math.max(0, totalEarned - totalSpent);
   }
 
   public getCompletionStats(

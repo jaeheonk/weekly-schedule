@@ -145,4 +145,91 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
     expect(screen.queryByTestId(`item-check-btn-${routineItem.id}`)).not.toBeInTheDocument();
     expect(screen.getByTestId(`item-badge-${routineItem.id}`)).toBeInTheDocument();
   });
+
+  describe('Parent Mode Controls & Praise Hearts (Seam 4 / Issue 04)', () => {
+    it('renders family praise banner when store has praise notes', () => {
+      store.sendFamilyPraise({
+        hearts: 3,
+        sticker: 'heart',
+        message: '오늘도 약속 지킨 우리 아이 최고! ⭐',
+      });
+
+      render(
+        <TodayScheduleView
+          items={store.getTodayItems()}
+          weekdayName="월요일"
+          store={store}
+          onPlayChime={mockPlayChime}
+        />
+      );
+
+      const banner = screen.getByTestId('family-praise-banner');
+      expect(banner).toBeInTheDocument();
+      expect(banner).toHaveTextContent('오늘도 약속 지킨 우리 아이 최고! ⭐');
+      expect(banner).toHaveTextContent('+3');
+    });
+
+    it('renders parent stamp buttons and praise trigger in parent mode', () => {
+      store.unlockParentMode();
+      const mockOpenPraise = vi.fn();
+      const todayItems = store.getTodayItems();
+      const checkable = todayItems.find((i) => store.isItemCheckable(i) && i.subTasks.length > 0)!;
+
+      // Child completes the item first
+      store.toggleCompletion(checkable);
+
+      render(
+        <TodayScheduleView
+          items={todayItems}
+          weekdayName="월요일"
+          store={store}
+          onPlayChime={mockPlayChime}
+          onOpenPraiseModal={mockOpenPraise}
+        />
+      );
+
+      // Top action button in parent mode
+      expect(screen.getByTestId('send-family-praise-btn')).toBeInTheDocument();
+
+      // Parent stamp button on checkable item
+      const stampBtn = screen.getByTestId(`item-parent-stamp-btn-${checkable.id}`);
+      expect(stampBtn).toBeInTheDocument();
+
+      // Click stamp button stamps the item
+      fireEvent.click(stampBtn);
+      expect(store.isParentVerified(checkable)).toBe(true);
+
+      // Parent praise button triggers callback
+      const praiseBtn = screen.getByTestId(`item-praise-btn-${checkable.id}`);
+      expect(praiseBtn).toBeInTheDocument();
+      fireEvent.click(praiseBtn);
+      expect(mockOpenPraise).toHaveBeenCalledWith(checkable);
+    });
+
+    it('renders reaction badge with sticker, hearts, and comment on schedule card', () => {
+      const todayItems = store.getTodayItems();
+      const checkable = todayItems.find((i) => store.isItemCheckable(i))!;
+
+      store.sendItemReaction({
+        item: checkable,
+        addHearts: 5,
+        sticker: 'crown',
+        comment: '오늘의 숙제 챔피언! 👑',
+      });
+
+      render(
+        <TodayScheduleView
+          items={todayItems}
+          weekdayName="월요일"
+          store={store}
+          onPlayChime={mockPlayChime}
+        />
+      );
+
+      const reactionBadge = screen.getByTestId(`item-reaction-badge-${checkable.id}`);
+      expect(reactionBadge).toBeInTheDocument();
+      expect(reactionBadge).toHaveTextContent('+5');
+      expect(reactionBadge).toHaveTextContent('오늘의 숙제 챔피언! 👑');
+    });
+  });
 });

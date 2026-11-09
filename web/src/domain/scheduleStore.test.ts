@@ -255,4 +255,146 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(store.getParentPinCode()).toBe('654321');
     });
   });
+
+  describe('Parent PIN, Lockout, Stamps & Praise Hearts (Seam 1 / Issue 04)', () => {
+    it('verifies correct 6-digit master PIN and switches to parent mode', () => {
+      const store = new ScheduleStore();
+      expect(store.isParentMode()).toBe(false);
+      expect(store.getDeviceRole()).toBe('child');
+
+      const ok = store.verifyParentPin('160125');
+      expect(ok).toBe(true);
+      expect(store.isParentMode()).toBe(true);
+      expect(store.getDeviceRole()).toBe('parent');
+      expect(store.getFailedPinAttempts()).toBe(0);
+
+      // Lock parent mode back to child mode
+      store.lockParentMode();
+      expect(store.isParentMode()).toBe(false);
+      expect(store.getDeviceRole()).toBe('child');
+    });
+
+    it('enforces 60-second lockout after 5 consecutive incorrect PIN attempts', () => {
+      const store = new ScheduleStore();
+
+      for (let i = 1; i <= 4; i++) {
+        expect(store.verifyParentPin('000000')).toBe(false);
+        expect(store.getFailedPinAttempts()).toBe(i);
+        expect(store.isPinLockedOut()).toBe(false);
+        expect(store.getRemainingLockoutSeconds()).toBe(0);
+      }
+
+      // 5th failed attempt triggers lockout
+      const fifthAttempt = store.verifyParentPin('000000');
+      expect(fifthAttempt).toBe(false);
+      expect(store.getFailedPinAttempts()).toBe(5);
+      expect(store.isPinLockedOut()).toBe(true);
+      expect(store.getRemainingLockoutSeconds()).toBeGreaterThanOrEqual(58);
+      expect(store.getRemainingLockoutSeconds()).toBeLessThanOrEqual(60);
+
+      // While locked out, even the correct PIN must be rejected
+      expect(store.verifyParentPin('160125')).toBe(false);
+
+      // Resetting lockout restores normal verification
+      store.resetPinLockout();
+      expect(store.isPinLockedOut()).toBe(false);
+      expect(store.getRemainingLockoutSeconds()).toBe(0);
+      expect(store.getFailedPinAttempts()).toBe(0);
+      expect(store.verifyParentPin('160125')).toBe(true);
+    });
+
+    it('allows parent mode to toggle parent verification stamp on items and subtasks', () => {
+      const store = new ScheduleStore();
+      const itemWithSubTasks = store
+        .getTodayItems()
+        .find((i) => store.isItemCheckable(i) && i.subTasks.length >= 2)!;
+      expect(itemWithSubTasks).toBeDefined();
+
+      // Child completes the item
+      store.toggleCompletion(itemWithSubTasks);
+      expect(store.isCompleted(itemWithSubTasks)).toBe(true);
+      expect(store.isParentVerified(itemWithSubTasks)).toBe(false);
+
+      // Parent mode stamps the item
+      store.toggleParentVerification(itemWithSubTasks);
+      expect(store.isParentVerified(itemWithSubTasks)).toBe(true);
+      for (const sub of itemWithSubTasks.subTasks) {
+        expect(store.isSubTaskParentVerified(sub)).toBe(true);
+      }
+
+      // Parent can cancel the stamp
+      store.toggleParentVerification(itemWithSubTasks);
+      expect(store.isParentVerified(itemWithSubTasks)).toBe(false);
+      for (const sub of itemWithSubTasks.subTasks) {
+        expect(store.isSubTaskParentVerified(sub)).toBe(false);
+      }
+
+      // Parent stamps individual subtask
+      const sub1 = itemWithSubTasks.subTasks[0];
+      const sub2 = itemWithSubTasks.subTasks[1];
+      store.toggleSubTaskParentVerification(sub1, itemWithSubTasks);
+      expect(store.isSubTaskParentVerified(sub1)).toBe(true);
+      expect(store.isSubTaskParentVerified(sub2)).toBe(false);
+      expect(store.isParentVerified(itemWithSubTasks)).toBe(false);
+
+      // Once all subtasks are parent-verified, the parent item is also verified
+      for (const sub of itemWithSubTasks.subTasks.slice(1)) {
+        store.toggleSubTaskParentVerification(sub, itemWithSubTasks);
+      }
+      expect(store.isParentVerified(itemWithSubTasks)).toBe(true);
+    });
+
+    it('manages item reactions, comments, and family praise notes with available hearts', () => {
+      const store = new ScheduleStore();
+      const item = store.getTodayItems().find((i) => store.isItemCheckable(i))!;
+      const initialHearts = store.getAvailableHearts();
+
+      // Child completes the item
+      store.toggleCompletion(item);
+
+      // Send heart +3 and comment to specific item
+      store.sendItemReaction({
+        item,
+        addHearts: 3,
+        sticker: 'heart',
+        comment: '오늘 스스로 숙제 잘했네! ❤️',
+        alsoVerify: true,
+      });
+
+      const reaction = store.getItemReaction(item);
+      expect(reaction).toBeDefined();
+      expect(reaction?.heartCount).toBe(3);
+      expect(reaction?.sticker).toBe('heart');
+      expect(reaction?.comment).toBe('오늘 스스로 숙제 잘했네! ❤️');
+      expect(reaction?.comments?.length).toBe(1);
+      expect(store.isParentVerified(item)).toBe(true);
+      expect(store.getAvailableHearts()).toBe(initialHearts + 3);
+
+      // Send additional reaction to the same item with 0 hearts (message only)
+      store.sendItemReaction({
+        item,
+        addHearts: 0,
+        sticker: 'thumbsUp',
+        comment: '앞으로도 화이팅!',
+      });
+      const reaction2 = store.getItemReaction(item);
+      expect(reaction2?.heartCount).toBe(3);
+      expect(reaction2?.sticker).toBe('thumbsUp');
+      expect(reaction2?.comments?.length).toBe(2);
+      expect(store.getAvailableHearts()).toBe(initialHearts + 3);
+
+      // Send general family praise banner
+      store.sendFamilyPraise({
+        hearts: 5,
+        sticker: 'crown',
+        message: '오늘 하루 최고였어 👑',
+      });
+      const praises = store.getPraiseNotes();
+      expect(praises.length).toBeGreaterThan(0);
+      expect(praises[0].hearts).toBe(5);
+      expect(praises[0].sticker).toBe('crown');
+      expect(praises[0].message).toBe('오늘 하루 최고였어 👑');
+      expect(store.getAvailableHearts()).toBe(initialHearts + 8);
+    });
+  });
 });
