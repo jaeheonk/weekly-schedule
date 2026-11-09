@@ -5,10 +5,11 @@ import { WeeklyGridView } from './components/WeeklyGridView';
 import { SyncToast } from './components/SyncToast';
 import { ParentPinModal } from './components/ParentPinModal';
 import { PraiseHeartModal } from './components/PraiseHeartModal';
+import { ScheduleEditModal } from './components/ScheduleEditModal';
 import { useCloudSync } from './hooks/useCloudSync';
 import { globalScheduleStore } from './domain/scheduleStore';
 import { compareScheduleItemsByTime } from './domain/calendarUtils';
-import { ScheduleItem, WEEKDAYS } from './types/schedule';
+import { ScheduleItem, WEEKDAYS, WeekdayNumber, ScheduleEditScope } from './types/schedule';
 
 export interface AppProps {
   syncOnMount?: boolean;
@@ -36,8 +37,33 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
     targetItem: ScheduleItem | null;
   }>({ isOpen: false, targetItem: null });
 
+  const [editModal, setEditModal] = useState<{
+    isOpen: boolean;
+    initialItem: ScheduleItem | null;
+    defaultWeekday: WeekdayNumber;
+    initialScope: ScheduleEditScope;
+  }>({
+    isOpen: false,
+    initialItem: null,
+    defaultWeekday: globalScheduleStore.getCurrentWeekday(),
+    initialScope: 'master',
+  });
+
   const currentDate = globalScheduleStore.getCurrentDate();
   const currentWeekday = globalScheduleStore.getCurrentWeekday();
+
+  const handleOpenEditModal = (
+    item: ScheduleItem | null = null,
+    weekday?: WeekdayNumber,
+    scope?: ScheduleEditScope
+  ) => {
+    setEditModal({
+      isOpen: true,
+      initialItem: item,
+      defaultWeekday: weekday || currentWeekday,
+      initialScope: scope || 'master',
+    });
+  };
 
   const { syncStatus, toastMessage, isSyncing, triggerSync, clearToast } = useCloudSync({
     store: globalScheduleStore,
@@ -104,11 +130,14 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
                 targetItem: target === undefined ? null : target,
               })
             }
+            onOpenEditModal={(target) => handleOpenEditModal(target || null, currentWeekday)}
           />
         ) : (
           <WeeklyGridView
             items={items}
             currentWeekday={currentWeekday}
+            store={globalScheduleStore}
+            onOpenEditModal={handleOpenEditModal}
           />
         )}
       </main>
@@ -128,6 +157,22 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
         isOpen={praiseModal.isOpen}
         onClose={() => setPraiseModal({ isOpen: false, targetItem: null })}
         targetItem={praiseModal.targetItem}
+        store={globalScheduleStore}
+      />
+
+      {/* Schedule Edit & Weekly Override Modal */}
+      <ScheduleEditModal
+        isOpen={editModal.isOpen}
+        onClose={() =>
+          setEditModal((prev) => ({
+            ...prev,
+            isOpen: false,
+            initialItem: null,
+          }))
+        }
+        initialItem={editModal.initialItem}
+        defaultWeekday={editModal.defaultWeekday}
+        initialScope={editModal.initialScope}
         store={globalScheduleStore}
       />
     </div>

@@ -182,4 +182,85 @@ describe('App & Hash Navigation (Seam 2)', () => {
       expect(screen.queryByTestId('parent-mode-indicator')).not.toBeInTheDocument();
     });
   });
+
+  describe('Master Schedule Editing & Weekly Override Integration (Seam 4 / Issue 05)', () => {
+    it('allows parent to create master schedule item, override this week, and automatically revert next week', async () => {
+      // Set to 2026-W46 Monday
+      globalScheduleStore.setCurrentDate(new Date(2026, 10, 9));
+      globalScheduleStore.unlockParentMode();
+
+      render(<App syncOnMount={false} />);
+
+      // 1. Add new master schedule item via today view
+      const addBtn = screen.getByTestId('today-add-schedule-btn');
+      fireEvent.click(addBtn);
+
+      const modal = screen.getByTestId('schedule-edit-modal');
+      expect(modal).toBeInTheDocument();
+
+      const titleInput = screen.getByTestId('schedule-title-input');
+      fireEvent.change(titleInput, { target: { value: '창의 로봇 코딩' } });
+
+      const startHourSelect = screen.getByTestId('start-hour-select');
+      fireEvent.change(startHourSelect, { target: { value: '17' } });
+
+      const endHourSelect = screen.getByTestId('end-hour-select');
+      fireEvent.change(endHourSelect, { target: { value: '18' } });
+
+      const saveBtn = screen.getByTestId('save-schedule-btn');
+      fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('schedule-edit-modal')).not.toBeInTheDocument();
+      });
+
+      // Item should now appear in today view
+      expect(screen.getByText('창의 로봇 코딩')).toBeInTheDocument();
+
+      // 2. Click edit button on the new item and adjust for this week only
+      const createdItem = globalScheduleStore.getTodayItems().find((it) => it.title === '창의 로봇 코딩')!;
+      expect(createdItem).toBeDefined();
+
+      const editBtn = screen.getByTestId(`item-edit-btn-${createdItem.id}`);
+      fireEvent.click(editBtn);
+
+      expect(screen.getByTestId('schedule-edit-modal')).toBeInTheDocument();
+
+      // Choose 'thisWeek' scope
+      fireEvent.click(screen.getByTestId('scope-this-week-radio'));
+
+      // Change time to 19:00 ~ 20:00
+      fireEvent.change(screen.getByTestId('start-hour-select'), { target: { value: '19' } });
+      fireEvent.change(screen.getByTestId('end-hour-select'), { target: { value: '20' } });
+
+      fireEvent.click(screen.getByTestId('save-schedule-btn'));
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('schedule-edit-modal')).not.toBeInTheDocument();
+      });
+
+      // Item should now display adjustment badge
+      const badge = screen.getByTestId(`item-adjustment-badge-${createdItem.id}`);
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveTextContent(/이번 주 시간 조정/);
+
+      // Switch to Weekly view
+      const weeklyTab = screen.getByRole('button', { name: /주간 시간표/i });
+      fireEvent.click(weeklyTab);
+
+      // Adjustment banner and badge visible in weekly view
+      expect(screen.getByTestId('weekly-adjustments-banner')).toBeInTheDocument();
+      expect(screen.getByTestId(`weekly-adjustment-badge-${createdItem.id}`)).toBeInTheDocument();
+
+      // 3. Week key transition to next week (2026-W47)
+      globalScheduleStore.setCurrentDate(new Date(2026, 10, 16));
+
+      // Overrides from W46 should NOT apply to W47; returns automatically to master time (17:00)
+      const w47Item = globalScheduleStore.getEffectiveItems().find((it) => it.id === createdItem.id);
+      expect(w47Item).toBeDefined();
+      expect(w47Item?.startHour).toBe(17);
+      expect(globalScheduleStore.isAdjustedThisWeek(w47Item!)).toBe(false);
+      expect(globalScheduleStore.getCurrentWeekAdjustmentCount()).toBe(0);
+    });
+  });
 });

@@ -6,6 +6,8 @@ import {
   DeviceRole,
   CompletionStats,
   CATEGORIES,
+  ScheduleEditScope,
+  WEEKDAYS,
 } from '../types/schedule';
 import {
   CloudSyncSnapshot,
@@ -20,7 +22,7 @@ import {
   StarRedemptionRequest,
   StarRewardPreset,
 } from '../types/snapshot';
-import { getWeekdayNumber, getWeekKey, compareScheduleItemsByTime } from './calendarUtils';
+import { getWeekdayNumber, getWeekKey, compareScheduleItemsByTime, formatTime } from './calendarUtils';
 import { getMasterScheduleItems } from './defaultSchedule';
 import { mergeSnapshots } from './snapshotMerge';
 import { DEFAULT_VERCEL_BLOB_TOKEN, DEFAULT_FAMILY_CODE } from '../services/vercelBlobSync';
@@ -1078,7 +1080,370 @@ export class ScheduleStore {
   }
 
   public getItems(): ScheduleItem[] {
-    return [...this.items];
+    return this.getEffectiveItems();
+  }
+
+  public getMasterItems(): ScheduleItem[] {
+    return this.items.filter((item) => !item.targetWeekKey);
+  }
+
+  public getExcludedMasterItemsForThisWeek(
+    weekday: WeekdayNumber,
+    weekKey?: WeekKey
+  ): ScheduleItem[] {
+    const wk = weekKey || this.getCurrentWeekKey();
+    const result: ScheduleItem[] = [];
+    for (const base of this.getMasterItems()) {
+      if (base.weekday !== weekday) continue;
+      const override = this.activeOverride(base.id, wk);
+      if (override && override.isSkipped) {
+        result.push(base);
+      }
+    }
+    return result;
+  }
+
+  public getEffectiveItems(weekKey?: WeekKey): ScheduleItem[] {
+    const wk = weekKey || this.getCurrentWeekKey();
+    const result: ScheduleItem[] = [];
+
+    for (const base of this.getMasterItems()) {
+      const override = this.activeOverride(base.id, wk);
+      if (override) {
+        if (override.isSkipped) {
+          continue;
+        }
+        if (override.overriddenItem) {
+          result.push({
+            ...override.overriddenItem,
+            id: base.id,
+            targetWeekKey: null,
+          });
+          continue;
+        }
+      }
+      result.push(base);
+    }
+
+    // Add this-week-only additions
+    const thisWeekAdditions = this.items.filter((item) => item.targetWeekKey === wk);
+    result.push(...thisWeekAdditions);
+
+    return result.sort(compareScheduleItemsByTime);
+  }
+
+  public activeOverride(baseItemId: string, weekKey?: WeekKey): WeeklyItemOverride | undefined {
+    const wk = weekKey || this.getCurrentWeekKey();
+    const key = `${wk}_${baseItemId}`;
+    const override = this.weeklyOverrides[key];
+    if (override && override.isActive) {
+      return override;
+    }
+    return undefined;
+  }
+
+  public isAdjustedThisWeek(item: ScheduleItem, weekKey?: WeekKey): boolean {
+    const wk = weekKey || this.getCurrentWeekKey();
+    if (item.targetWeekKey === wk) {
+      return true;
+    }
+    return this.activeOverride(item.id, wk) !== undefined;
+  }
+
+  public hasThisWeekOverride(itemId: string, weekKey?: WeekKey): boolean {
+    return this.activeOverride(itemId, weekKey) !== undefined;
+  }
+
+  public isSkippedThisWeek(itemId: string, weekKey?: WeekKey): boolean {
+    return this.activeOverride(itemId, weekKey)?.isSkipped === true;
+  }
+
+  public adjustmentBadgeText(item: ScheduleItem, weekKey?: WeekKey): string | null {
+    const wk = weekKey || this.getCurrentWeekKey();
+    if (item.targetWeekKey === wk) {
+      return '이번 주 추가 일정';
+    }
+    const override = this.activeOverride(item.id, wk);
+    if (!override) return null;
+    if (override.isSkipped) {
+      return '이번 주 휴강·제외';
+    }
+    const base = this.items.find((it) => it.id === item.id && !it.targetWeekKey);
+    if (base) {
+      const current = override.overriddenItem ?? item;
+      const dayChanged = base.weekday !== current.weekday;
+      const timeChanged =
+        base.startHour !== current.startHour ||
+        base.startMinute !== current.startMinute ||
+        base.endHour !== current.endHour ||
+        base.endMinute !== current.endMinute;
+      const baseStartTime = formatTime(base.startHour, base.startMinute);
+      const baseDayInfo = WEEKDAYS.find((w) => w.number === base.weekday);
+
+      if (dayChanged && timeChanged) {
+        return `이번 주 요일·시간 조정 (원래 ${baseDayInfo?.shortName || ''} ${baseStartTime})`;
+      } else if (dayChanged) {
+        return `이번 주 요일 이동 (원래 ${baseDayInfo?.fullName || ''} ${baseStartTime})`;
+      } else if (timeChanged) {
+        return `이번 주 시간 조정 (원래 ${baseStartTime})`;
+      } else {
+        return '이번 주 내용 조정됨';
+      }
+    }
+    return '이번 주 조정됨';
+  }
+
+  public getCurrentWeekAdjustmentCount(weekKey?: WeekKey): number {
+    const wk = weekKey || this.getCurrentWeekKey();
+    const activeOverrideCount = Object.values(this.weeklyOverrides).filter((ov) => {
+      if (ov.weekKey !== wk || !ov.isActive) return false;
+      const base = this.items.find((it) => it.id === ov.baseItemId && !it.targetWeekKey);
+      return Boolean(base && (ov.isSkipped || ov.overriddenItem));
+    }).length;
+    const addedThisWeekCount = this.items.filter((it) => it.targetWeekKey === wk).length;
+    return activeOverrideCount + addedThisWeekCount;
+  }
+
+  public hasSameScheduleContent(a: ScheduleItem, b: ScheduleItem): boolean {
+    const aSub = (a.subTasks || []).map((s) => s.title).join('|');
+    const bSub = (b.subTasks || []).map((s) => s.title).join('|');
+    const aLeads = (a.notificationLeadMinutes || []).slice().sort().join(',');
+    const bLeads = (b.notificationLeadMinutes || []).slice().sort().join(',');
+
+    return (
+      a.weekday === b.weekday &&
+      a.startHour === b.startHour &&
+      a.startMinute === b.startMinute &&
+      a.endHour === b.endHour &&
+      a.endMinute === b.endMinute &&
+      a.title === b.title &&
+      a.note === b.note &&
+      a.category === b.category &&
+      a.iconName === b.iconName &&
+      aSub === bSub &&
+      Boolean(a.isNotificationEnabled) === Boolean(b.isNotificationEnabled) &&
+      aLeads === bLeads
+    );
+  }
+
+  public addItem(
+    item: ScheduleItem,
+    targetWeekdays: WeekdayNumber[] = [],
+    scope: ScheduleEditScope = 'master'
+  ): boolean {
+    if (scope === 'master' && !this.isParentMode()) {
+      return false;
+    }
+    const days = targetWeekdays.length > 0 ? targetWeekdays : [item.weekday];
+    const now = Date.now() / 1000;
+    const wk = scope === 'thisWeek' ? this.getCurrentWeekKey() : null;
+
+    for (let i = 0; i < days.length; i++) {
+      const day = days[i];
+      const copyId =
+        i === 0 && days.length === 1
+          ? item.id || generateEntityId('item')
+          : generateEntityId('item');
+
+      const copy: ScheduleItem = {
+        ...item,
+        id: copyId,
+        weekday: day,
+        targetWeekKey: wk,
+        updatedAt: now,
+      };
+      this.items.push(copy);
+    }
+
+    this.saveItems();
+    this.saveSnapshotMeta();
+    this.notify();
+    return true;
+  }
+
+  public updateItem(updated: ScheduleItem, scope: ScheduleEditScope = 'master'): boolean {
+    if (scope === 'master' && !this.isParentMode()) {
+      return false;
+    }
+    const now = Date.now() / 1000;
+    const wk = this.getCurrentWeekKey();
+
+    if (scope === 'thisWeek') {
+      const base = this.items.find((it) => it.id === updated.id && !it.targetWeekKey);
+      if (base) {
+        const key = `${wk}_${base.id}`;
+        const adjustedCopy: ScheduleItem = {
+          ...updated,
+          id: base.id,
+          targetWeekKey: null,
+          updatedAt: now,
+        };
+        if (this.hasSameScheduleContent(adjustedCopy, base)) {
+          this.weeklyOverrides[key] = {
+            id: key,
+            weekKey: wk,
+            baseItemId: base.id,
+            isActive: false,
+            isSkipped: false,
+            overriddenItem: undefined,
+            updatedAt: now,
+          };
+        } else {
+          this.weeklyOverrides[key] = {
+            id: key,
+            weekKey: wk,
+            baseItemId: base.id,
+            isActive: true,
+            isSkipped: false,
+            overriddenItem: adjustedCopy,
+            updatedAt: now,
+          };
+        }
+      } else {
+        const idx = this.items.findIndex((it) => it.id === updated.id);
+        if (idx !== -1) {
+          this.items[idx] = {
+            ...updated,
+            targetWeekKey: wk,
+            updatedAt: now,
+          };
+        }
+      }
+    } else {
+      const idx = this.items.findIndex((it) => it.id === updated.id);
+      if (idx !== -1) {
+        this.items[idx] = {
+          ...updated,
+          targetWeekKey: null,
+          updatedAt: now,
+        };
+        const key = `${wk}_${updated.id}`;
+        if (this.weeklyOverrides[key]?.isActive) {
+          this.weeklyOverrides[key] = {
+            id: key,
+            weekKey: wk,
+            baseItemId: updated.id,
+            isActive: false,
+            isSkipped: false,
+            overriddenItem: undefined,
+            updatedAt: now,
+          };
+        }
+      }
+    }
+
+    this.saveItems();
+    this.saveSnapshotMeta();
+    this.notify();
+    return true;
+  }
+
+  public skipItemForThisWeek(item: ScheduleItem): boolean {
+    if (this.isParentVerified(item) && !this.isParentMode()) {
+      return false;
+    }
+    const wk = this.getCurrentWeekKey();
+    if (item.targetWeekKey === wk) {
+      return this.deleteItem(item);
+    }
+    const now = Date.now() / 1000;
+    const key = `${wk}_${item.id}`;
+    this.weeklyOverrides[key] = {
+      id: key,
+      weekKey: wk,
+      baseItemId: item.id,
+      isActive: true,
+      isSkipped: true,
+      overriddenItem: undefined,
+      updatedAt: now,
+    };
+    this.saveSnapshotMeta();
+    this.notify();
+    return true;
+  }
+
+  public revertThisWeekOverride(itemId: string): void {
+    const wk = this.getCurrentWeekKey();
+    const key = `${wk}_${itemId}`;
+    const now = Date.now() / 1000;
+    this.weeklyOverrides[key] = {
+      id: key,
+      weekKey: wk,
+      baseItemId: itemId,
+      isActive: false,
+      isSkipped: false,
+      overriddenItem: undefined,
+      updatedAt: now,
+    };
+    this.saveSnapshotMeta();
+    this.notify();
+  }
+
+  public resetThisWeekAdjustments(weekday?: WeekdayNumber): void {
+    const wk = this.getCurrentWeekKey();
+    const now = Date.now() / 1000;
+
+    for (const [key, ov] of Object.entries(this.weeklyOverrides)) {
+      if (ov.weekKey === wk && ov.isActive) {
+        const baseDay = this.items.find((it) => it.id === ov.baseItemId)?.weekday;
+        const modDay = ov.overriddenItem?.weekday;
+        if (!weekday || baseDay === weekday || modDay === weekday) {
+          this.weeklyOverrides[key] = {
+            ...ov,
+            isActive: false,
+            isSkipped: false,
+            overriddenItem: undefined,
+            updatedAt: now,
+          };
+        }
+      }
+    }
+
+    const toRemove = this.items.filter(
+      (it) =>
+        it.targetWeekKey === wk &&
+        (!weekday || it.weekday === weekday) &&
+        (!this.isParentVerified(it) || this.isParentMode())
+    );
+    for (const rem of toRemove) {
+      this.deletedItemTimestamps[rem.id] = now;
+    }
+    const removeIds = new Set(toRemove.map((it) => it.id));
+    this.items = this.items.filter((it) => !removeIds.has(it.id));
+
+    this.saveItems();
+    this.saveSnapshotMeta();
+    this.notify();
+  }
+
+  public deleteItem(item: ScheduleItem): boolean {
+    // Master items require parent mode; parent-verified items always require parent mode
+    if ((!item.targetWeekKey || this.isParentVerified(item)) && !this.isParentMode()) {
+      return false;
+    }
+    const now = Date.now() / 1000;
+    const wk = this.getCurrentWeekKey();
+
+    this.deletedItemTimestamps[item.id] = now;
+    this.items = this.items.filter((it) => it.id !== item.id);
+
+    const key = `${wk}_${item.id}`;
+    if (this.weeklyOverrides[key]) {
+      this.weeklyOverrides[key] = {
+        id: key,
+        weekKey: wk,
+        baseItemId: item.id,
+        isActive: false,
+        isSkipped: false,
+        overriddenItem: undefined,
+        updatedAt: now,
+      };
+    }
+
+    this.saveItems();
+    this.saveSnapshotMeta();
+    this.notify();
+    return true;
   }
 
   public getCurrentDate(): Date {
@@ -1098,15 +1463,15 @@ export class ScheduleStore {
     return getWeekdayNumber(this.currentDate);
   }
 
-  public getItemsForWeekday(weekday: WeekdayNumber): ScheduleItem[] {
-    return this.items
+  public getItemsForWeekday(weekday: WeekdayNumber, weekKey?: WeekKey): ScheduleItem[] {
+    return this.getEffectiveItems(weekKey)
       .filter((item) => item.weekday === weekday)
       .sort(compareScheduleItemsByTime);
   }
 
-  public getTodayItems(): ScheduleItem[] {
+  public getTodayItems(weekKey?: WeekKey): ScheduleItem[] {
     const today = this.getCurrentWeekday();
-    return this.getItemsForWeekday(today);
+    return this.getItemsForWeekday(today, weekKey);
   }
 }
 

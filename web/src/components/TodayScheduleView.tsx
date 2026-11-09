@@ -12,10 +12,14 @@ import {
   Lock,
   X,
   Heart,
+  Edit3,
+  Plus,
+  RotateCcw,
+  Ban,
 } from 'lucide-react';
 import { ScheduleItem, CATEGORIES, SubTask } from '../types/schedule';
 import { STICKER_EMOJIS } from '../types/snapshot';
-import { formatTimeRange } from '../domain/calendarUtils';
+import { formatTimeRange, formatTime } from '../domain/calendarUtils';
 import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
 import { playCompletionChime } from '../services/soundEffects';
 
@@ -25,6 +29,7 @@ export interface TodayScheduleViewProps {
   store?: ScheduleStore;
   onPlayChime?: () => void;
   onOpenPraiseModal?: (item?: ScheduleItem | null) => void;
+  onOpenEditModal?: (item?: ScheduleItem | null) => void;
 }
 
 export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
@@ -33,6 +38,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
   store = globalScheduleStore,
   onPlayChime = playCompletionChime,
   onOpenPraiseModal,
+  onOpenEditModal,
 }) => {
   const [, setRenderVersion] = useState(0);
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
@@ -59,6 +65,10 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
   const stats = store.getCompletionStats(items);
   const isParentMode = store.isParentMode();
   const latestPraise = store.getLatestPraiseNote();
+  const currentWeekday = store.getCurrentWeekday();
+  const skippedTodayItems = store
+    .getMasterItems()
+    .filter((it) => it.weekday === currentWeekday && store.isSkippedThisWeek(it.id));
 
   const handleItemToggle = (item: ScheduleItem) => {
     const wasCompleted = store.isCompleted(item);
@@ -168,31 +178,59 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
             </div>
           </div>
 
-          {isParentMode && onOpenPraiseModal && (
-            <button
-              type="button"
-              data-testid="send-family-praise-btn"
-              onClick={() => onOpenPraiseModal(null)}
-              className="shrink-0 px-3.5 py-2 rounded-xl bg-white text-rose-600 hover:bg-rose-50 font-bold text-xs shadow-md transition-all active:scale-95"
-            >
-              응원 보내기
-            </button>
+          {isParentMode && (
+            <div className="flex items-center gap-2 shrink-0">
+              {onOpenEditModal && (
+                <button
+                  type="button"
+                  data-testid="today-add-schedule-btn"
+                  onClick={() => onOpenEditModal(null)}
+                  className="px-3.5 py-2 rounded-xl bg-white/20 hover:bg-white/30 text-white font-bold text-xs backdrop-blur-sm transition-all active:scale-95 flex items-center gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>일정 추가</span>
+                </button>
+              )}
+              {onOpenPraiseModal && (
+                <button
+                  type="button"
+                  data-testid="send-family-praise-btn"
+                  onClick={() => onOpenPraiseModal(null)}
+                  className="px-3.5 py-2 rounded-xl bg-white text-rose-600 hover:bg-rose-50 font-bold text-xs shadow-md transition-all active:scale-95"
+                >
+                  응원 보내기
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}
 
       {/* Parent Mode Top Action Bar (when no praise notes yet) */}
-      {isParentMode && !latestPraise && onOpenPraiseModal && (
-        <div className="flex justify-end">
-          <button
-            type="button"
-            data-testid="send-family-praise-btn"
-            onClick={() => onOpenPraiseModal(null)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-gradient-to-r from-pink-500 to-rose-500 text-white font-bold text-xs shadow-md shadow-pink-500/20 hover:from-pink-600 hover:to-rose-600 transition-all active:scale-95"
-          >
-            <Heart className="w-3.5 h-3.5 fill-white" />
-            <span>아이에게 전체 응원 보내기</span>
-          </button>
+      {isParentMode && !latestPraise && (
+        <div className="flex items-center justify-end gap-2">
+          {onOpenEditModal && (
+            <button
+              type="button"
+              data-testid="today-add-schedule-btn"
+              onClick={() => onOpenEditModal(null)}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs border border-slate-300 shadow-xs transition-all active:scale-95"
+            >
+              <Plus className="w-3.5 h-3.5 text-blue-600" />
+              <span>새 일정 추가</span>
+            </button>
+          )}
+          {onOpenPraiseModal && (
+            <button
+              type="button"
+              data-testid="send-family-praise-btn"
+              onClick={() => onOpenPraiseModal(null)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-gradient-to-r from-pink-500 to-rose-500 text-white font-bold text-xs shadow-md shadow-pink-500/20 hover:from-pink-600 hover:to-rose-600 transition-all active:scale-95"
+            >
+              <Heart className="w-3.5 h-3.5 fill-white" />
+              <span>아이에게 전체 응원 보내기</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -271,6 +309,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
             const isCompleted = store.isCompleted(item);
             const isVerified = store.isParentVerified(item);
             const reaction = store.getItemReaction(item);
+            const badgeText = store.adjustmentBadgeText(item);
 
             return (
               <div
@@ -334,6 +373,15 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                           <Clock className="w-3 h-3 text-slate-400" />
                           <span>{timeStr}</span>
                         </div>
+                        {badgeText && (
+                          <span
+                            data-testid={`item-adjustment-badge-${item.id}`}
+                            className="flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200"
+                          >
+                            <span>⚡</span>
+                            <span>{badgeText}</span>
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1.5">
@@ -492,10 +540,22 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                       </div>
                     )}
 
-                    {/* Parent Mode Actions (Stamp & Cheer) */}
-                    {isParentMode && isCheckable && (
+                    {/* Parent Mode Actions (Edit, Stamp & Cheer) */}
+                    {isParentMode && (
                       <div className="flex items-center gap-2 mt-3 pt-2.5 border-t border-slate-100 justify-end">
-                        {onOpenPraiseModal && (
+                        {onOpenEditModal && (
+                          <button
+                            type="button"
+                            data-testid={`item-edit-btn-${item.id}`}
+                            onClick={() => onOpenEditModal(item)}
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-200 transition-colors"
+                          >
+                            <Edit3 className="w-3.5 h-3.5 text-slate-600" />
+                            <span>수정</span>
+                          </button>
+                        )}
+
+                        {isCheckable && onOpenPraiseModal && (
                           <button
                             type="button"
                             data-testid={`item-praise-btn-${item.id}`}
@@ -507,27 +567,29 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                           </button>
                         )}
 
-                        <button
-                          type="button"
-                          data-testid={`item-parent-stamp-btn-${item.id}`}
-                          onClick={() => handleParentStampClick(item)}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition-all ${
-                            isVerified
-                              ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
-                              : store.canParentVerify(item)
-                              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-300 shadow-sm'
-                              : 'bg-slate-100 text-slate-500 hover:bg-slate-200/80 border border-slate-200'
-                          }`}
-                        >
-                          <Award className="w-4 h-4" />
-                          <span>
-                            {isVerified
-                              ? '참 잘했어요 도장 날인됨'
-                              : store.canParentVerify(item)
-                              ? '부모 확인 도장 찍기'
-                              : '아이 완료 대기 중'}
-                          </span>
-                        </button>
+                        {isCheckable && (
+                          <button
+                            type="button"
+                            data-testid={`item-parent-stamp-btn-${item.id}`}
+                            onClick={() => handleParentStampClick(item)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition-all ${
+                              isVerified
+                                ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
+                                : store.canParentVerify(item)
+                                ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-300 shadow-sm'
+                                : 'bg-slate-100 text-slate-500 hover:bg-slate-200/80 border border-slate-200'
+                            }`}
+                          >
+                            <Award className="w-4 h-4" />
+                            <span>
+                              {isVerified
+                                ? '참 잘했어요 도장 날인됨'
+                                : store.canParentVerify(item)
+                                ? '부모 확인 도장 찍기'
+                                : '아이 완료 대기 중'}
+                            </span>
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -535,6 +597,49 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Skipped / Cancelled Items for Today (if any) */}
+      {skippedTodayItems.length > 0 && (
+        <div
+          data-testid="today-skipped-items-section"
+          className="bg-slate-100/90 border border-dashed border-slate-300 rounded-3xl p-4 sm:p-5 space-y-2.5 animate-in fade-in"
+        >
+          <div className="flex items-center justify-between text-xs font-bold text-slate-600">
+            <div className="flex items-center gap-1.5">
+              <Ban className="w-4 h-4 text-amber-600" />
+              <span>이번 주 휴강·제외된 일정 ({skippedTodayItems.length}건)</span>
+            </div>
+            <span className="text-[11px] text-slate-400">다음 주가 되면 원래대로 자동 복구됩니다</span>
+          </div>
+
+          <div className="space-y-2">
+            {skippedTodayItems.map((sk) => (
+              <div
+                key={sk.id}
+                className="flex items-center justify-between text-xs bg-white px-3.5 py-2.5 rounded-2xl border border-slate-200 shadow-2xs"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 line-through font-semibold">{sk.title}</span>
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    ({formatTime(sk.startHour, sk.startMinute)} ~ {formatTime(sk.endHour, sk.endMinute)})
+                  </span>
+                </div>
+                {isParentMode && (
+                  <button
+                    type="button"
+                    data-testid={`restore-skipped-btn-${sk.id}`}
+                    onClick={() => store.revertThisWeekOverride(sk.id)}
+                    className="flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1 rounded-xl border border-indigo-200 transition-colors"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>휴강 취소 및 복구</span>
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

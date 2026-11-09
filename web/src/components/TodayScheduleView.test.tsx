@@ -231,5 +231,56 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       expect(reactionBadge).toHaveTextContent('+5');
       expect(reactionBadge).toHaveTextContent('오늘의 숙제 챔피언! 👑');
     });
+
+    it('renders adjustment badges, parent edit buttons, and skipped items section (Issue 05)', () => {
+      store.unlockParentMode();
+      const mockOpenEdit = vi.fn();
+      const todayItems = store.getTodayItems();
+      const item1 = todayItems[0];
+      const item2 = todayItems[1];
+
+      // Modify item1 time for this week
+      store.updateItem({ ...item1, startHour: 19 }, 'thisWeek');
+
+      // Skip item2 for this week
+      store.skipItemForThisWeek(item2);
+
+      const effectiveItems = store.getTodayItems();
+      expect(effectiveItems.some((it) => it.id === item2.id)).toBe(false);
+
+      render(
+        <TodayScheduleView
+          items={effectiveItems}
+          weekdayName="월요일"
+          store={store}
+          onOpenEditModal={mockOpenEdit}
+        />
+      );
+
+      // Adjustment badge on modified item1
+      const badge = screen.getByTestId(`item-adjustment-badge-${item1.id}`);
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveTextContent(/이번 주 시간 조정/i);
+
+      // Edit button on item1
+      const editBtn = screen.getByTestId(`item-edit-btn-${item1.id}`);
+      fireEvent.click(editBtn);
+      const modifiedItem1 = effectiveItems.find((it) => it.id === item1.id);
+      expect(mockOpenEdit).toHaveBeenCalledWith(modifiedItem1);
+
+      // Top action add schedule button
+      const addBtn = screen.getByTestId('today-add-schedule-btn');
+      fireEvent.click(addBtn);
+      expect(mockOpenEdit).toHaveBeenCalledWith(null);
+
+      // Skipped item2 rendered in skipped items section
+      expect(screen.getByTestId('today-skipped-items-section')).toBeInTheDocument();
+      const restoreBtn = screen.getByTestId(`restore-skipped-btn-${item2.id}`);
+      expect(restoreBtn).toBeInTheDocument();
+
+      // Click restore
+      fireEvent.click(restoreBtn);
+      expect(store.isSkippedThisWeek(item2.id)).toBe(false);
+    });
   });
 });

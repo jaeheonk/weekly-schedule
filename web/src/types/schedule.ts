@@ -109,6 +109,8 @@ export interface ScheduleItem {
 
 export type DeviceRole = 'child' | 'parent';
 
+export type ScheduleEditScope = 'master' | 'thisWeek';
+
 export interface CompletionStats {
   completed: number;
   verified: number;

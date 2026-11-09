@@ -397,4 +397,201 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(store.getAvailableHearts()).toBe(initialHearts + 8);
     });
   });
+
+  describe('Master Schedule CRUD & Weekly Override Engine (Seam 1 / Issue 05)', () => {
+    it('allows parent to add new master schedule items across multiple weekdays', () => {
+      const store = new ScheduleStore();
+      store.unlockParentMode();
+
+      const newItem = {
+        id: 'new-piano-lesson',
+        weekday: 1 as const,
+        startHour: 17,
+        startMinute: 0,
+        endHour: 18,
+        endMinute: 0,
+        title: '피아노 학원',
+        note: '체르니 30번 연습',
+        category: 'music' as const,
+        iconName: 'music',
+        subTasks: [{ id: 'sub-p1', title: '스케일 연습' }, { id: 'sub-p2', title: '체르니' }],
+        isNotificationEnabled: true,
+        notificationLeadMinutes: [15],
+        updatedAt: Date.now() / 1000,
+      };
+
+      // Add to Monday (1) and Wednesday (3)
+      store.addItem(newItem, [1, 3], 'master');
+
+      const mondayItems = store.getItemsForWeekday(1);
+      const wednesdayItems = store.getItemsForWeekday(3);
+
+      const addedMonday = mondayItems.find((it) => it.title === '피아노 학원');
+      const addedWed = wednesdayItems.find((it) => it.title === '피아노 학원');
+
+      expect(addedMonday).toBeDefined();
+      expect(addedWed).toBeDefined();
+      expect(addedMonday?.id).not.toBe(addedWed?.id); // Should have unique IDs
+      expect(addedMonday?.subTasks.length).toBe(2);
+      expect(addedMonday?.category).toBe('music');
+      expect(store.isAdjustedThisWeek(addedMonday!)).toBe(false);
+    });
+
+    it('allows adding this-week-only schedule additions that do not appear in other weeks', () => {
+      const nov9 = new Date(2026, 10, 9); // Week 46, Monday
+      const store = new ScheduleStore({ currentDate: nov9 });
+      store.unlockParentMode();
+
+      const tempItem = {
+        id: 'temp-hospital-visit',
+        weekday: 1 as const,
+        startHour: 14,
+        startMinute: 0,
+        endHour: 15,
+        endMinute: 0,
+        title: '안과 정기 검진',
+        note: '시력 측정',
+        category: 'routine' as const,
+        iconName: 'sparkles',
+        subTasks: [],
+        isNotificationEnabled: true,
+        notificationLeadMinutes: [15],
+        updatedAt: Date.now() / 1000,
+      };
+
+      store.addItem(tempItem, [1], 'thisWeek');
+
+      // In current week (2026-W46)
+      const week46Monday = store.getItemsForWeekday(1);
+      const foundIn46 = week46Monday.find((it) => it.title === '안과 정기 검진');
+      expect(foundIn46).toBeDefined();
+      expect(store.isAdjustedThisWeek(foundIn46!)).toBe(true);
+      expect(store.adjustmentBadgeText(foundIn46!)).toBe('이번 주 추가 일정');
+
+      // Change week to next week (2026-W47)
+      const nov16 = new Date(2026, 10, 16); // Week 47
+      store.setCurrentDate(nov16);
+      const week47Monday = store.getItemsForWeekday(1);
+      const foundIn47 = week47Monday.find((it) => it.title === '안과 정기 검진');
+      expect(foundIn47).toBeUndefined(); // Temporary addition must disappear in other weeks
+    });
+
+    it('allows updating master schedule permanently or overriding only for the current week', () => {
+      const nov9 = new Date(2026, 10, 9); // Week 46, Monday
+      const store = new ScheduleStore({ currentDate: nov9 });
+      store.unlockParentMode();
+
+      const baseMonday = store.getItemsForWeekday(1)[0];
+      expect(baseMonday).toBeDefined();
+      const originalTitle = baseMonday.title;
+      const originalStartHour = baseMonday.startHour;
+
+      // 1. Temporary Weekly Override: Move from 15:00 Monday to 17:00 Wednesday for this week only
+      const modifiedForThisWeek = {
+        ...baseMonday,
+        weekday: 3 as const,
+        startHour: 17,
+        startMinute: 30,
+        endHour: 18,
+        endMinute: 30,
+        note: '이번 주만 수요일 5시 반으로 이동',
+      };
+
+      store.updateItem(modifiedForThisWeek, 'thisWeek');
+
+      // Monday in 2026-W46 should NOT have this item anymore
+      const w46Monday = store.getItemsForWeekday(1);
+      expect(w46Monday.some((it) => it.id === baseMonday.id)).toBe(false);
+
+      // Wednesday in 2026-W46 SHOULD have this item with adjusted badge
+      const w46Wed = store.getItemsForWeekday(3);
+      const adjustedWed = w46Wed.find((it) => it.id === baseMonday.id);
+      expect(adjustedWed).toBeDefined();
+      expect(adjustedWed?.startHour).toBe(17);
+      expect(adjustedWed?.startMinute).toBe(30);
+      expect(store.isAdjustedThisWeek(adjustedWed!)).toBe(true);
+      expect(store.adjustmentBadgeText(adjustedWed!)).toContain('이번 주 요일·시간 조정');
+
+      // Switch to next week (2026-W47): Must automatically revert back to original Monday master schedule!
+      const nov16 = new Date(2026, 10, 16);
+      store.setCurrentDate(nov16);
+      const w47Monday = store.getItemsForWeekday(1);
+      const revertedMonday = w47Monday.find((it) => it.id === baseMonday.id);
+      expect(revertedMonday).toBeDefined();
+      expect(revertedMonday?.weekday).toBe(1);
+      expect(revertedMonday?.startHour).toBe(originalStartHour);
+      expect(store.isAdjustedThisWeek(revertedMonday!)).toBe(false);
+
+      // 2. Permanent Master Update: Change title for everyone
+      store.updateItem({ ...baseMonday, title: `${originalTitle} [업데이트]` }, 'master');
+      const updatedMaster = store.getItemsForWeekday(1).find((it) => it.id === baseMonday.id);
+      expect(updatedMaster?.title).toBe(`${originalTitle} [업데이트]`);
+    });
+
+    it('allows skipping (cancelling) an item for this week only and restoring it', () => {
+      const nov9 = new Date(2026, 10, 9);
+      const store = new ScheduleStore({ currentDate: nov9 });
+      store.unlockParentMode();
+
+      const baseItem = store.getItemsForWeekday(1)[0];
+      expect(baseItem).toBeDefined();
+
+      // Skip for this week
+      const skipSuccess = store.skipItemForThisWeek(baseItem);
+      expect(skipSuccess).toBe(true);
+      expect(store.isSkippedThisWeek(baseItem.id)).toBe(true);
+
+      // Should not be in effective items for this week
+      const w46Items = store.getItemsForWeekday(1);
+      expect(w46Items.some((it) => it.id === baseItem.id)).toBe(false);
+
+      // Revert this week override
+      store.revertThisWeekOverride(baseItem.id);
+      expect(store.isSkippedThisWeek(baseItem.id)).toBe(false);
+      const w46ItemsAfterRevert = store.getItemsForWeekday(1);
+      expect(w46ItemsAfterRevert.some((it) => it.id === baseItem.id)).toBe(true);
+    });
+
+    it('resets all adjustments for a given weekday or the entire week', () => {
+      const nov9 = new Date(2026, 10, 9);
+      const store = new ScheduleStore({ currentDate: nov9 });
+      store.unlockParentMode();
+
+      const item1 = store.getItemsForWeekday(1)[0];
+      const item2 = store.getItemsForWeekday(1)[1];
+
+      store.skipItemForThisWeek(item1);
+      store.updateItem({ ...item2, startHour: 20 }, 'thisWeek');
+
+      expect(store.getCurrentWeekAdjustmentCount()).toBe(2);
+
+      // Reset adjustments for Monday (1)
+      store.resetThisWeekAdjustments(1);
+      expect(store.getCurrentWeekAdjustmentCount()).toBe(0);
+      expect(store.isSkippedThisWeek(item1.id)).toBe(false);
+      expect(store.getItemsForWeekday(1).find((it) => it.id === item2.id)?.startHour).toBe(item2.startHour);
+    });
+
+    it('prevents non-parent from deleting or modifying master schedule items, but allows parent', () => {
+      const store = new ScheduleStore();
+      const checkable = store.getItemsForWeekday(1).find((it) => store.isItemCheckable(it))!;
+
+      // Complete and parent-verify item
+      store.toggleCompletion(checkable);
+      store.unlockParentMode();
+      store.toggleParentVerification(checkable);
+      store.lockParentMode(); // back to child mode
+
+      // Child attempts to skip or delete master item
+      expect(store.skipItemForThisWeek(checkable)).toBe(false);
+      expect(store.deleteItem(checkable)).toBe(false);
+      expect(store.addItem(checkable, [1], 'master')).toBe(false);
+      expect(store.updateItem(checkable, 'master')).toBe(false);
+
+      // Parent unlocks and succeeds
+      store.unlockParentMode();
+      expect(store.deleteItem(checkable)).toBe(true);
+      expect(store.getItems().some((it) => it.id === checkable.id)).toBe(false);
+    });
+  });
 });
