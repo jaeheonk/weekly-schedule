@@ -98,6 +98,21 @@ describe('VercelBlobSyncService proxy client', () => {
     expect(url).toBe('https://sync.example.com/api/sync/latest?familyCode=kimfamily');
   });
 
+  it('rejects a family code that sanitizes to empty instead of targeting the default family', async () => {
+    const mockFetch = vi.fn();
+    globalThis.fetch = mockFetch;
+
+    const service = new VercelBlobSyncService('');
+    await expect(service.fetchLatestSnapshot('!!!')).rejects.toThrow('familyCode');
+    await expect(
+      service.uploadSnapshot(remoteSnapshot, {
+        familyCode: '!!!',
+        shortDeviceId: 'web-1234',
+      })
+    ).rejects.toThrow('familyCode');
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('returns an empty snapshot when the proxy has no stored blobs', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,

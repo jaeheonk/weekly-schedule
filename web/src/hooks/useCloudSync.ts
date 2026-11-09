@@ -79,6 +79,10 @@ export function useCloudSync({
           return;
         }
 
+        if (latest && !snapshot) {
+          throw new Error('최신 클라우드 동기화 스냅샷을 받지 못했습니다.');
+        }
+
         let eventToastMessage: string | null = null;
 
         // 2. Merge the proxy snapshot when a newer remote pathname arrives

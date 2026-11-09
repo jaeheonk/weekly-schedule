@@ -51,12 +51,19 @@ export class VercelBlobSyncService {
 
   public sanitizeFamilyCode(raw: string): string {
     const trimmed = (raw || '').trim().toLowerCase();
-    const filtered = trimmed.replace(/[^a-z0-9_-]/g, '');
-    return filtered.length > 0 ? filtered : DEFAULT_FAMILY_CODE;
+    return trimmed.replace(/[^a-z0-9_-]/g, '');
+  }
+
+  private familyCodeForRequest(raw: string): string {
+    const safeFamily = this.sanitizeFamilyCode(raw);
+    if (!safeFamily) {
+      throw new VercelBlobSyncError('유효한 familyCode가 필요합니다.');
+    }
+    return safeFamily;
   }
 
   public async fetchLatestSnapshot(familyCode: string): Promise<SyncLatestResult> {
-    const safeFamily = this.sanitizeFamilyCode(familyCode);
+    const safeFamily = this.familyCodeForRequest(familyCode);
     const query = new URLSearchParams({ familyCode: safeFamily });
     const response = await fetch(`${this.apiBaseUrl}/api/sync/latest?${query.toString()}`, {
       method: 'GET',
@@ -80,7 +87,7 @@ export class VercelBlobSyncService {
     snapshot: CloudSyncSnapshot,
     options: UploadSnapshotOptions
   ): Promise<VercelBlobPutResponse> {
-    const safeFamily = this.sanitizeFamilyCode(options.familyCode);
+    const safeFamily = this.familyCodeForRequest(options.familyCode);
     const response = await fetch(`${this.apiBaseUrl}/api/sync/upload`, {
       method: 'POST',
       headers: {

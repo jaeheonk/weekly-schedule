@@ -33,6 +33,10 @@ Status: resolved
    - 반환값(`syncStatus`, `toastMessage`, `triggerSync` 등)은 그대로입니다. `App.tsx`, `Navigation.tsx`, `TodayScheduleView.tsx`는 수정하지 않았습니다.
    - 병합은 프록시가 내려준 클라우드 동기화 스냅샷으로 수행합니다.
 
-4. **검증**:
-   - `vercelBlobSync.test.ts` 6개, `useCloudSync.test.ts` 5개, `App.test.tsx` 13개 통과.
-   - 웹 전체 122개 테스트와 `tsc --noEmit` 통과. 서버 스위트 23개도 통과.
+4. **리뷰 후 보정**:
+   - 패밀리 코드가 비거나 기호만 있으면 `family-main`으로 바꾸지 않고 요청 전에 거절합니다.
+   - 프록시가 최신 blob 메타데이터만 주고 스냅샷 본문이 없으면 업로드하지 않습니다.
+
+5. **검증**:
+   - `vercelBlobSync.test.ts` 7개, `useCloudSync.test.ts` 6개 통과.
+   - 웹 전체 124개 테스트와 `tsc --noEmit` 통과. 서버 스위트 23개도 통과.

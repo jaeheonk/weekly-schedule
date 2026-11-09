@@ -83,6 +83,32 @@ describe('useCloudSync Hook', () => {
     expect(result.current.toastMessage).toContain('부모님이 칭찬 응원 카드를 보내주셨어요');
   });
 
+  it('does not upload when the proxy returns blob metadata without a snapshot', async () => {
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
+      latest: { url: 'https://blob.test/state1.json', pathname: 'families/family-main/state-1.json' },
+      snapshot: null,
+      allBlobs: [
+        { url: 'https://blob.test/state1.json', pathname: 'families/family-main/state-1.json' },
+      ],
+    });
+    const uploadSpy = vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({
+      url: 'https://blob.test/state2.json',
+      pathname: 'families/family-main/state-2.json',
+    });
+
+    const { result } = renderHook(() =>
+      useCloudSync({ store, syncService, pollingIntervalMs: 0, syncOnMount: false })
+    );
+
+    await act(async () => {
+      await result.current.triggerSync({ isManual: true });
+    });
+
+    expect(uploadSpy).not.toHaveBeenCalled();
+    expect(result.current.syncStatus).toBe('error');
+    expect(result.current.toastMessage).toContain('클라우드 동기화 스냅샷');
+  });
+
   it('handles sync error gracefully and displays error toast', async () => {
     vi.spyOn(syncService, 'fetchLatestSnapshot').mockRejectedValue(
       new Error('네트워크 연결 끊김')
