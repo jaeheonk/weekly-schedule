@@ -17,11 +17,12 @@ import {
   RotateCcw,
   Ban,
 } from 'lucide-react';
-import { ScheduleItem, CATEGORIES, SubTask } from '../types/schedule';
+import { ScheduleItem, CATEGORIES, SubTask, WeekdayNumber } from '../types/schedule';
 import { STICKER_EMOJIS } from '../types/snapshot';
 import { formatTimeRange, formatTime } from '../domain/calendarUtils';
 import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
 import { playCompletionChime } from '../services/soundEffects';
+import { WeeklyStarStampBoardCard } from './WeeklyStarStampBoardCard';
 
 export interface TodayScheduleViewProps {
   items: ScheduleItem[];
@@ -30,6 +31,7 @@ export interface TodayScheduleViewProps {
   onPlayChime?: () => void;
   onOpenPraiseModal?: (item?: ScheduleItem | null) => void;
   onOpenEditModal?: (item?: ScheduleItem | null) => void;
+  onOpenParentPin?: (day?: WeekdayNumber) => void;
 }
 
 export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
@@ -39,6 +41,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
   onPlayChime = playCompletionChime,
   onOpenPraiseModal,
   onOpenEditModal,
+  onOpenParentPin,
 }) => {
   const [, setRenderVersion] = useState(0);
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
@@ -233,6 +236,22 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
           )}
         </div>
       )}
+
+      {/* ⭐ Weekly Star Stamp Board Card (Mon-Fri +1⭐ & Weekly Bonus +2⭐) */}
+      <WeeklyStarStampBoardCard
+        store={store}
+        onTapStarShop={() => {
+          window.location.hash = '#stars';
+        }}
+        onRequestAwardStar={(day) => {
+          if (store.isParentMode()) {
+            store.awardDailyStar(day);
+          } else if (onOpenParentPin) {
+            onOpenParentPin(day);
+          }
+        }}
+        selectedWeekday={currentWeekday}
+      />
 
       {/* 1. Daily Progress Gauge Card */}
       <div

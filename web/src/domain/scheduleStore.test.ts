@@ -594,4 +594,233 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(store.getItems().some((it) => it.id === checkable.id)).toBe(false);
     });
   });
+
+  describe('Star Ledger, Daily Quests & Reward Shop (Seam 1 / Issue 06)', () => {
+    const completeAndVerifyWeekday = (store: ScheduleStore, day: 1 | 2 | 3 | 4 | 5) => {
+      const items = store.getItemsForWeekday(day).filter((it) => store.isItemCheckable(it));
+      for (const item of items) {
+        if (!store.isCompleted(item)) store.toggleCompletion(item);
+        for (const sub of item.subTasks) {
+          if (!store.isSubTaskCompleted(sub)) store.toggleSubTaskCompletion(sub, item);
+        }
+      }
+      store.unlockParentMode();
+      for (const item of items) {
+        if (!store.isParentVerified(item)) store.toggleParentVerification(item);
+        for (const sub of item.subTasks) {
+          if (!store.isSubTaskParentVerified(sub)) store.toggleSubTaskParentVerification(sub, item);
+        }
+      }
+    };
+
+    it('evaluates weekday star states: weekend excluded, in-progress, and claimable when all items verified', () => {
+      const nov9 = new Date(2026, 10, 9); // Monday
+      const store = new ScheduleStore({ currentDate: nov9 });
+
+      // Saturday (6) and Sunday (7) are excluded from weekday star quests
+      expect(store.getWeekdayStarState(6)).toEqual({ kind: 'weekendExcluded' });
+      expect(store.getWeekdayStarState(7)).toEqual({ kind: 'weekendExcluded' });
+
+      // Monday has checkable tasks -> inProgress initially
+      const mondayInitialState = store.getWeekdayStarState(1);
+      expect(mondayInitialState.kind).toBe('inProgress');
+      if (mondayInitialState.kind === 'inProgress') {
+        expect(mondayInitialState.completed).toBe(0);
+        expect(mondayInitialState.verified).toBe(0);
+        expect(mondayInitialState.total).toBeGreaterThan(0);
+      }
+
+      // Complete all Monday items and subtasks
+      const monItems = store.getItemsForWeekday(1).filter((it) => store.isItemCheckable(it));
+      for (const item of monItems) {
+        if (!store.isCompleted(item)) store.toggleCompletion(item);
+        for (const sub of item.subTasks) {
+          if (!store.isSubTaskCompleted(sub)) store.toggleSubTaskCompletion(sub, item);
+        }
+      }
+
+      // Not yet verified by parent -> still inProgress
+      const partialState = store.getWeekdayStarState(1);
+      expect(partialState.kind).toBe('inProgress');
+      if (partialState.kind === 'inProgress') {
+        expect(partialState.completed).toBe(monItems.length);
+        expect(partialState.verified).toBe(0);
+      }
+
+      // Parent verifies all Monday items and subtasks
+      store.unlockParentMode();
+      for (const item of monItems) {
+        if (!store.isParentVerified(item)) store.toggleParentVerification(item);
+        for (const sub of item.subTasks) {
+          if (!store.isSubTaskParentVerified(sub)) store.toggleSubTaskParentVerification(sub, item);
+        }
+      }
+
+      // Now Monday should be claimable!
+      const claimableState = store.getWeekdayStarState(1);
+      expect(claimableState).toEqual({ kind: 'claimable', total: monItems.length });
+    });
+
+    it('awards daily star (+1) when claimable, prevents duplicate awards, and marks state awarded', () => {
+      const nov9 = new Date(2026, 10, 9); // Monday
+      const store = new ScheduleStore({ currentDate: nov9 });
+
+      // Complete and verify all Monday items
+      completeAndVerifyWeekday(store, 1);
+
+      expect(store.getAvailableStars()).toBe(0);
+      expect(store.isDailyStarAwarded(1)).toBe(false);
+
+      // Award daily star
+      const awardResult = store.awardDailyStar(1);
+      expect(awardResult).toBe(true);
+
+      // Ledger calculations
+      expect(store.getAvailableStars()).toBe(1);
+      expect(store.getTotalEarnedStars()).toBe(1);
+      expect(store.getTotalSpentStars()).toBe(0);
+      expect(store.getThisWeekEarnedStars()).toBe(1);
+      expect(store.isDailyStarAwarded(1)).toBe(true);
+
+      const stateAfterAward = store.getWeekdayStarState(1);
+      expect(stateAfterAward.kind).toBe('awarded');
+
+      // Duplicate award attempts must be rejected
+      expect(store.awardDailyStar(1)).toBe(false);
+      expect(store.getAvailableStars()).toBe(1);
+    });
+
+    it('automatically grants weekly all-clear bonus (+2⭐) when all 5 weekdays (Mon-Fri) are awarded', () => {
+      const nov9 = new Date(2026, 10, 9); // Monday
+      const store = new ScheduleStore({ currentDate: nov9 });
+
+      // Complete and verify Mon(1) to Thu(4)
+      for (const d of [1, 2, 3, 4] as const) {
+        completeAndVerifyWeekday(store, d);
+        expect(store.awardDailyStar(d)).toBe(true);
+      }
+
+      expect(store.getAwardedDailyStarCount()).toBe(4);
+      expect(store.isWeeklyBonusAwarded()).toBe(false);
+      expect(store.getAvailableStars()).toBe(4);
+
+      // Complete and verify Friday (5)
+      completeAndVerifyWeekday(store, 5);
+
+      // Awarding the 5th day triggers automatic +2 bonus!
+      expect(store.awardDailyStar(5)).toBe(true);
+      expect(store.getAwardedDailyStarCount()).toBe(5);
+      expect(store.isWeeklyBonusAwarded()).toBe(true);
+
+      // Total stars = 5 daily + 2 bonus = 7 stars
+      expect(store.getAvailableStars()).toBe(7);
+      expect(store.getTotalEarnedStars()).toBe(7);
+      expect(store.getThisWeekEarnedStars()).toBe(7);
+
+      // Celebration context captures bonus
+      const celebration = store.getCelebrationContext();
+      expect(celebration).toBeDefined();
+      expect(celebration?.earnedDailyStar).toBe(1);
+      expect(celebration?.earnedWeeklyBonus).toBe(2);
+      expect(celebration?.totalAvailableStars).toBe(7);
+    });
+
+    it('handles reward presets, redemption requests, and parent approvals with atomic heart conversion', () => {
+      const store = new ScheduleStore();
+
+      // Check default presets exist
+      const presets = store.getStarRewardPresets();
+      expect(presets.length).toBeGreaterThanOrEqual(2);
+      const heartPreset = presets.find((p) => p.actionType === 'convertToHearts')!;
+      const robuxPreset = presets.find((p) => p.starCost === 10)!;
+
+      expect(heartPreset).toBeDefined();
+      expect(heartPreset.starCost).toBe(1);
+      expect(heartPreset.grantedHearts).toBe(5);
+      expect(robuxPreset).toBeDefined();
+      expect(robuxPreset.starCost).toBe(10);
+
+      // Initial star balance = 0 -> request fails
+      expect(store.requestStarRedemption(heartPreset)).toBe(false);
+
+      // Give 2 stars directly via awardDailyStar on Mon and Tue
+      completeAndVerifyWeekday(store, 1);
+      completeAndVerifyWeekday(store, 2);
+      expect(store.awardDailyStar(1)).toBe(true);
+      expect(store.awardDailyStar(2)).toBe(true);
+
+      expect(store.getAvailableStars()).toBe(2);
+      expect(store.getRequestableStars()).toBe(2);
+      expect(store.getReservedPendingStars()).toBe(0);
+
+      // Child requests 1 heartPreset (1 star)
+      store.lockParentMode();
+      const requestSuccess = store.requestStarRedemption(heartPreset);
+      expect(requestSuccess).toBe(true);
+
+      // Reserved pending stars = 1, available = 2 (not deducted until approved), requestable = 1
+      expect(store.getReservedPendingStars()).toBe(1);
+      expect(store.getAvailableStars()).toBe(2);
+      expect(store.getRequestableStars()).toBe(1);
+      expect(store.getPendingStarRedemptionCount()).toBe(1);
+
+      const pendingReq = store.getStarRedemptionRequests()[0];
+      expect(pendingReq.status).toBe('pending');
+      expect(pendingReq.rewardTitle).toBe(heartPreset.title);
+
+      // Initial hearts before approval
+      const initialHearts = store.getAvailableHearts();
+
+      // Parent approves the redemption
+      store.unlockParentMode();
+      const approveSuccess = store.approveStarRedemption(pendingReq);
+      expect(approveSuccess).toBe(true);
+
+      // Now available stars deducted to 1, spent = 1, reserved = 0
+      expect(store.getAvailableStars()).toBe(1);
+      expect(store.getTotalSpentStars()).toBe(1);
+      expect(store.getReservedPendingStars()).toBe(0);
+      expect(store.getPendingStarRedemptionCount()).toBe(0);
+
+      // Hearts increased by 5 atomically!
+      expect(store.getAvailableHearts()).toBe(initialHearts + 5);
+
+      // Star ledger records the spend transaction
+      const txs = store.getStarTransactions();
+      const spendTx = txs.find((t) => t.kind === 'rewardRedemption');
+      expect(spendTx).toBeDefined();
+      expect(spendTx?.delta).toBe(-1);
+    });
+
+    it('allows rejecting pending requests without deducting stars, and supports immediate parent redemption', () => {
+      const store = new ScheduleStore();
+
+      // Give 1 star on Monday
+      completeAndVerifyWeekday(store, 1);
+      expect(store.awardDailyStar(1)).toBe(true);
+      expect(store.getAvailableStars()).toBe(1);
+
+      const heartPreset = store.getStarRewardPresets().find((p) => p.actionType === 'convertToHearts')!;
+
+      // Child requests
+      store.lockParentMode();
+      store.requestStarRedemption(heartPreset);
+      expect(store.getReservedPendingStars()).toBe(1);
+
+      // Parent rejects
+      const req = store.getStarRedemptionRequests()[0];
+      store.rejectStarRedemption(req);
+
+      expect(store.getReservedPendingStars()).toBe(0);
+      expect(store.getAvailableStars()).toBe(1); // not deducted
+      expect(store.getStarRedemptionRequests()[0].status).toBe('rejected');
+
+      // Parent redeems immediately
+      store.unlockParentMode();
+      const immediateResult = store.redeemStarRewardImmediately(heartPreset);
+      expect(immediateResult).toBe(true);
+      expect(store.getAvailableStars()).toBe(0);
+      expect(store.getTotalSpentStars()).toBe(1);
+    });
+  });
 });

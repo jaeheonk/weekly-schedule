@@ -21,6 +21,9 @@ import {
   StarTransaction,
   StarRedemptionRequest,
   StarRewardPreset,
+  WeekdayStarState,
+  StarCelebrationContext,
+  DEFAULT_STAR_PRESETS,
 } from '../types/snapshot';
 import { getWeekdayNumber, getWeekKey, compareScheduleItemsByTime, formatTime } from './calendarUtils';
 import { getMasterScheduleItems } from './defaultSchedule';
@@ -113,6 +116,7 @@ export class ScheduleStore {
   private revokedStarTransactionIds: string[] = [];
   private revokedStarRedemptionIds: string[] = [];
   private revokedPraiseNoteIds: string[] = [];
+  private celebrationContext: StarCelebrationContext | null = null;
 
   constructor(options: ScheduleStoreOptions = {}) {
     this.currentDate = options.currentDate || new Date();
@@ -596,6 +600,9 @@ export class ScheduleStore {
       }
     } catch {
       // ignore
+    }
+    if (!this.starRewardPresets || this.starRewardPresets.length === 0) {
+      this.starRewardPresets = [...DEFAULT_STAR_PRESETS];
     }
   }
 
@@ -1444,6 +1451,392 @@ export class ScheduleStore {
     this.saveSnapshotMeta();
     this.notify();
     return true;
+  }
+
+  // MARK: - ⭐ Star Ledger, Quests, & Star Reward Shop (Issue 06)
+
+  public getStarRewardPresets(): StarRewardPreset[] {
+    return this.starRewardPresets.filter((p) => {
+      const delTs = this.deletedStarPresetTimestamps[p.id] || 0;
+      return delTs < p.updatedAt;
+    });
+  }
+
+  public getStarTransactions(): StarTransaction[] {
+    const revokedSet = new Set(this.revokedStarTransactionIds);
+    return this.starTransactions.filter((tx) => !revokedSet.has(tx.id));
+  }
+
+  public getStarRedemptionRequests(): StarRedemptionRequest[] {
+    const revokedSet = new Set(this.revokedStarRedemptionIds);
+    return this.starRedemptionRequests.filter((r) => !revokedSet.has(r.id));
+  }
+
+  public getTotalEarnedStars(): number {
+    return this.getStarTransactions()
+      .filter((tx) => tx.delta > 0)
+      .reduce((sum, tx) => sum + tx.delta, 0);
+  }
+
+  public getTotalSpentStars(): number {
+    return this.getStarTransactions()
+      .filter((tx) => tx.delta < 0)
+      .reduce((sum, tx) => sum + Math.abs(tx.delta), 0);
+  }
+
+  public getAvailableStars(): number {
+    return Math.max(
+      0,
+      this.getStarTransactions().reduce((sum, tx) => sum + tx.delta, 0)
+    );
+  }
+
+  public getReservedPendingStars(): number {
+    return this.getStarRedemptionRequests()
+      .filter((r) => r.status === 'pending')
+      .reduce((sum, r) => sum + r.starCost, 0);
+  }
+
+  public getRequestableStars(): number {
+    return Math.max(0, this.getAvailableStars() - this.getReservedPendingStars());
+  }
+
+  public getThisWeekEarnedStars(weekKey?: WeekKey): number {
+    const wk = weekKey || this.getCurrentWeekKey();
+    return this.getStarTransactions()
+      .filter((tx) => tx.weekKey === wk && tx.delta > 0)
+      .reduce((sum, tx) => sum + tx.delta, 0);
+  }
+
+  public getPendingStarRedemptionCount(): number {
+    return this.getStarRedemptionRequests().filter((r) => r.status === 'pending').length;
+  }
+
+  public getWeekdayStarState(weekday: WeekdayNumber, weekKey?: WeekKey): WeekdayStarState {
+    if (weekday === 6 || weekday === 7) {
+      return { kind: 'weekendExcluded' };
+    }
+
+    const wk = weekKey || this.getCurrentWeekKey();
+    const earnTxId = `star_earn_${wk}_${weekday}`;
+
+    const existingTx = this.getStarTransactions().find(
+      (tx) =>
+        tx.id === earnTxId ||
+        (tx.kind === 'dailyAllClear' && tx.weekKey === wk && tx.weekdayRawValue === weekday)
+    );
+    if (existingTx) {
+      return { kind: 'awarded', transaction: existingTx };
+    }
+
+    const checkableItems = this.getItemsForWeekday(weekday, wk).filter((it) =>
+      this.isItemCheckable(it)
+    );
+    if (checkableItems.length === 0) {
+      return { kind: 'ineligibleEmpty' };
+    }
+
+    let completedCount = 0;
+    let verifiedCount = 0;
+
+    for (const item of checkableItems) {
+      const itemDone =
+        this.isCompleted(item, wk) &&
+        item.subTasks.every((sub) => this.isSubTaskCompleted(sub, wk));
+      const itemVerified =
+        this.isParentVerified(item, wk) &&
+        item.subTasks.every((sub) => this.isSubTaskParentVerified(sub, wk));
+
+      if (itemDone) completedCount++;
+      if (itemVerified) verifiedCount++;
+    }
+
+    const total = checkableItems.length;
+    if (completedCount === total && verifiedCount === total) {
+      return { kind: 'claimable', total };
+    }
+    return { kind: 'inProgress', completed: completedCount, verified: verifiedCount, total };
+  }
+
+  public isDailyStarAwarded(weekday: WeekdayNumber, weekKey?: WeekKey): boolean {
+    return this.getWeekdayStarState(weekday, weekKey).kind === 'awarded';
+  }
+
+  public isWeeklyBonusAwarded(weekKey?: WeekKey): boolean {
+    const wk = weekKey || this.getCurrentWeekKey();
+    const bonusId = `star_bonus_weekly_${wk}`;
+    return this.getStarTransactions().some(
+      (tx) => tx.id === bonusId || (tx.kind === 'weeklyAllClearBonus' && tx.weekKey === wk)
+    );
+  }
+
+  public getAwardedDailyStarCount(weekKey?: WeekKey): number {
+    const wk = weekKey || this.getCurrentWeekKey();
+    return ([1, 2, 3, 4, 5] as const).filter((d) => this.isDailyStarAwarded(d, wk)).length;
+  }
+
+  public awardDailyStar(weekday: WeekdayNumber, weekKey?: WeekKey): boolean {
+    if (weekday === 6 || weekday === 7) return false;
+    const wk = weekKey || this.getCurrentWeekKey();
+
+    const state = this.getWeekdayStarState(weekday, wk);
+    if (state.kind !== 'claimable') return false;
+
+    const earnId = `star_earn_${wk}_${weekday}`;
+    if (
+      this.starTransactions.some(
+        (tx) =>
+          tx.id === earnId ||
+          (tx.kind === 'dailyAllClear' && tx.weekKey === wk && tx.weekdayRawValue === weekday)
+      )
+    ) {
+      return false;
+    }
+
+    const ts = currentEpochSeconds();
+    const weekdayInfo = WEEKDAYS.find((w) => w.number === weekday);
+
+    const dailyTx: StarTransaction = {
+      id: earnId,
+      kind: 'dailyAllClear',
+      delta: 1,
+      weekKey: wk,
+      weekdayRawValue: weekday,
+      title: `${weekdayInfo?.fullName || '평일'} 퀘스트 올클리어!`,
+      note: `할 일 ${state.total}개 완료 & 부모님 확인 완료`,
+      createdAt: ts,
+      createdByRole: this.deviceRole === 'parent' ? '👩‍👨 부모님' : '👦 아이',
+    };
+
+    this.starTransactions.unshift(dailyTx);
+
+    const bonusGranted = this.evaluateAndGrantWeeklyAllClearBonusIfNeeded(wk, ts + 0.001);
+
+    this.celebrationContext = {
+      weekday,
+      earnedDailyStar: 1,
+      earnedWeeklyBonus: bonusGranted ? 2 : 0,
+      totalAvailableStars: this.getAvailableStars(),
+    };
+
+    this.saveSnapshotMeta();
+    this.notify();
+    return true;
+  }
+
+  public evaluateAndGrantWeeklyAllClearBonusIfNeeded(
+    weekKey: string,
+    timestamp: number = currentEpochSeconds()
+  ): boolean {
+    const bonusId = `star_bonus_weekly_${weekKey}`;
+    if (this.revokedStarTransactionIds.includes(bonusId)) return false;
+    if (
+      this.starTransactions.some(
+        (tx) => tx.id === bonusId || (tx.kind === 'weeklyAllClearBonus' && tx.weekKey === weekKey)
+      )
+    ) {
+      return false;
+    }
+
+    const allFiveDaysEarned = ([1, 2, 3, 4, 5] as const).every((d) =>
+      this.isDailyStarAwarded(d, weekKey)
+    );
+
+    if (!allFiveDaysEarned) return false;
+
+    const bonusTx: StarTransaction = {
+      id: bonusId,
+      kind: 'weeklyAllClearBonus',
+      delta: 2,
+      weekKey,
+      title: '👑 주간 평일 올클리어 보너스!',
+      note: '월~금 5일 연속 스타 달성 자동 보너스 (+2⭐)',
+      createdAt: timestamp,
+      createdByRole: '👑 자동 보너스',
+    };
+
+    this.starTransactions.unshift(bonusTx);
+    this.starTransactions.sort((a, b) => b.createdAt - a.createdAt);
+    return true;
+  }
+
+  private createStarRedemptionRequest(preset: StarRewardPreset): StarRedemptionRequest {
+    const ts = currentEpochSeconds();
+    const reqId = generateEntityId('star_req');
+    return {
+      id: reqId,
+      presetId: preset.id,
+      emoji: preset.emoji,
+      rewardTitle: preset.title,
+      starCost: preset.starCost,
+      actionType: preset.actionType,
+      grantedHearts: preset.grantedHearts,
+      status: 'pending',
+      requestedAt: ts,
+      requestedByRole: this.deviceRole === 'parent' ? '👩‍👨 부모님' : '👦 아이',
+      updatedAt: ts,
+    };
+  }
+
+  public requestStarRedemption(preset: StarRewardPreset): boolean {
+    if (preset.starCost <= 0 || this.getRequestableStars() < preset.starCost) {
+      return false;
+    }
+
+    const req = this.createStarRedemptionRequest(preset);
+    this.starRedemptionRequests.unshift(req);
+    this.saveSnapshotMeta();
+    this.notify();
+    return true;
+  }
+
+  public approveStarRedemption(request: StarRedemptionRequest): boolean {
+    const idx = this.starRedemptionRequests.findIndex((r) => r.id === request.id);
+    if (idx === -1 || this.starRedemptionRequests[idx].status !== 'pending') {
+      return false;
+    }
+    if (this.getAvailableStars() < request.starCost) {
+      return false;
+    }
+
+    const ts = currentEpochSeconds();
+    const spendTxId = `star_spend_${request.id}`;
+
+    this.starRedemptionRequests[idx] = {
+      ...this.starRedemptionRequests[idx],
+      status: 'approved',
+      resolvedAt: ts,
+      resolvedByRole: this.deviceRole === 'parent' ? '👩‍👨 부모님' : '👦 아이',
+      updatedAt: ts,
+    };
+
+    if (!this.starTransactions.some((tx) => tx.id === spendTxId)) {
+      const spendTx: StarTransaction = {
+        id: spendTxId,
+        kind: 'rewardRedemption',
+        delta: -request.starCost,
+        weekKey: this.getCurrentWeekKey(),
+        title: `${request.emoji} ${request.rewardTitle} 교환`,
+        note:
+          request.actionType === 'convertToHearts'
+            ? `스타 ${request.starCost}개 → 하트 +${request.grantedHearts}개 즉시 충전`
+            : `스타 ${request.starCost}개 보상 교환 승인 완료`,
+        createdAt: ts,
+        createdByRole: this.deviceRole === 'parent' ? '👩‍👨 부모님' : '👦 아이',
+        linkedRedemptionId: request.id,
+        linkedHeartGrantCount:
+          request.actionType === 'convertToHearts' ? request.grantedHearts : undefined,
+      };
+      this.starTransactions.unshift(spendTx);
+    }
+
+    if (request.actionType === 'convertToHearts' && request.grantedHearts > 0) {
+      if (!this.praiseNotes.some((n) => n.id === request.id)) {
+        const heartGrantNote: ParentPraiseNote = {
+          id: request.id,
+          hearts: request.grantedHearts,
+          sticker: 'star',
+          message: `⭐ 스타 ${request.starCost}개로 ❤️ 하트 ${request.grantedHearts}개 보너스 충전!`,
+          createdAt: ts,
+        };
+        this.praiseNotes.unshift(heartGrantNote);
+        if (this.praiseNotes.length > 40) {
+          const overflow = this.praiseNotes.slice(40);
+          this.archivedEarnedHearts += overflow.reduce((sum, n) => sum + n.hearts, 0);
+          this.praiseNotes = this.praiseNotes.slice(0, 40);
+        }
+      }
+    }
+
+    this.celebrationContext = {
+      earnedDailyStar: 0,
+      earnedWeeklyBonus: 0,
+      totalAvailableStars: this.getAvailableStars(),
+      approvedRewardTitle: request.rewardTitle,
+      approvedRewardEmoji: request.emoji,
+    };
+
+    this.saveSnapshotMeta();
+    this.notify();
+    return true;
+  }
+
+  public redeemStarRewardImmediately(preset: StarRewardPreset): boolean {
+    if (preset.starCost <= 0 || this.getAvailableStars() < preset.starCost) {
+      return false;
+    }
+
+    const req = this.createStarRedemptionRequest(preset);
+    this.starRedemptionRequests.unshift(req);
+    return this.approveStarRedemption(req);
+  }
+
+  public rejectStarRedemption(request: StarRedemptionRequest): boolean {
+    const idx = this.starRedemptionRequests.findIndex((r) => r.id === request.id);
+    if (idx === -1 || this.starRedemptionRequests[idx].status !== 'pending') {
+      return false;
+    }
+
+    const ts = currentEpochSeconds();
+    this.starRedemptionRequests[idx] = {
+      ...this.starRedemptionRequests[idx],
+      status: 'rejected',
+      resolvedAt: ts,
+      resolvedByRole: this.deviceRole === 'parent' ? '👩‍👨 부모님' : '👦 아이',
+      updatedAt: ts,
+    };
+
+    this.saveSnapshotMeta();
+    this.notify();
+    return true;
+  }
+
+  public addStarRewardPreset(
+    preset: Omit<StarRewardPreset, 'id' | 'updatedAt'>
+  ): StarRewardPreset {
+    const newPreset: StarRewardPreset = {
+      ...preset,
+      id: generateEntityId('preset'),
+      updatedAt: currentEpochSeconds(),
+    };
+    this.starRewardPresets.push(newPreset);
+    this.saveSnapshotMeta();
+    this.notify();
+    return newPreset;
+  }
+
+  public deleteStarRewardPreset(id: string): void {
+    const ts = currentEpochSeconds();
+    this.deletedStarPresetTimestamps[id] = ts;
+    this.starRewardPresets = this.starRewardPresets.filter((p) => p.id !== id);
+    this.saveSnapshotMeta();
+    this.notify();
+  }
+
+  public resetStarRewardPresetsToDefault(): void {
+    this.starRewardPresets = [...DEFAULT_STAR_PRESETS];
+    this.deletedStarPresetTimestamps = {};
+    this.saveSnapshotMeta();
+    this.notify();
+  }
+
+  public revokeStarTransaction(tx: StarTransaction | string): void {
+    const id = typeof tx === 'string' ? tx : tx.id;
+    if (!this.revokedStarTransactionIds.includes(id)) {
+      this.revokedStarTransactionIds.push(id);
+    }
+    this.starTransactions = this.starTransactions.filter((t) => t.id !== id);
+    this.saveSnapshotMeta();
+    this.notify();
+  }
+
+  public getCelebrationContext(): StarCelebrationContext | null {
+    return this.celebrationContext;
+  }
+
+  public clearCelebrationContext(): void {
+    this.celebrationContext = null;
+    this.notify();
   }
 
   public getCurrentDate(): Date {

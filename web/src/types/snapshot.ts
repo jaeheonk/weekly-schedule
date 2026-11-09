@@ -146,6 +146,47 @@ export interface StarRedemptionRequest {
   updatedAt: number;
 }
 
+export type WeekdayStarState =
+  | { kind: 'weekendExcluded' }
+  | { kind: 'ineligibleEmpty' }
+  | { kind: 'inProgress'; completed: number; verified: number; total: number }
+  | { kind: 'claimable'; total: number }
+  | { kind: 'awarded'; transaction: StarTransaction };
+
+export interface StarCelebrationContext {
+  weekday?: number;
+  earnedDailyStar: number;
+  earnedWeeklyBonus: number;
+  totalAvailableStars: number;
+  approvedRewardTitle?: string;
+  approvedRewardEmoji?: string;
+}
+
+export const DEFAULT_STAR_PRESETS: StarRewardPreset[] = [
+  {
+    id: '00000000-0000-0000-0000-000000000201',
+    emoji: '💝',
+    title: '하트 5개 보너스 상자',
+    subtitle: '스타 1개로 하트 5개를 즉시 충전해요!',
+    starCost: 1,
+    actionType: 'convertToHearts',
+    grantedHearts: 5,
+    badgeTag: '즉시 충전',
+    updatedAt: 1700000000,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000202',
+    emoji: '🎮',
+    title: '로블록스 로벅스 500개',
+    subtitle: '열심히 모은 스타 10개로 교환하는 스페셜 보상!',
+    starCost: 10,
+    actionType: 'customVoucher',
+    grantedHearts: 0,
+    badgeTag: '스페셜 목표',
+    updatedAt: 1700000000,
+  },
+];
+
 export interface CloudSyncSnapshot {
   schemaVersion: number;
   familyCode: string;

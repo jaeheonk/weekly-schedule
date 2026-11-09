@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Navigation } from './components/Navigation';
 import { TodayScheduleView } from './components/TodayScheduleView';
 import { WeeklyGridView } from './components/WeeklyGridView';
+import { StarRewardShopView } from './components/StarRewardShopView';
+import { StarCelebrationModal } from './components/StarCelebrationModal';
 import { SyncToast } from './components/SyncToast';
 import { ParentPinModal } from './components/ParentPinModal';
 import { PraiseHeartModal } from './components/PraiseHeartModal';
@@ -10,19 +12,21 @@ import { useCloudSync } from './hooks/useCloudSync';
 import { globalScheduleStore } from './domain/scheduleStore';
 import { compareScheduleItemsByTime } from './domain/calendarUtils';
 import { ScheduleItem, WEEKDAYS, WeekdayNumber, ScheduleEditScope } from './types/schedule';
+import { StarCelebrationContext } from './types/snapshot';
 
 export interface AppProps {
   syncOnMount?: boolean;
 }
 
 export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
-  const getTabFromHash = (): 'today' | 'weekly' => {
+  const getTabFromHash = (): 'today' | 'weekly' | 'stars' => {
     const hash = window.location.hash.toLowerCase();
     if (hash === '#weekly') return 'weekly';
+    if (hash === '#stars') return 'stars';
     return 'today';
   };
 
-  const [activeTab, setActiveTab] = useState<'today' | 'weekly'>(getTabFromHash);
+  const [activeTab, setActiveTab] = useState<'today' | 'weekly' | 'stars'>(getTabFromHash);
   const [items, setItems] = useState<ScheduleItem[]>(() => globalScheduleStore.getItems());
   const [isParentMode, setIsParentMode] = useState<boolean>(() =>
     globalScheduleStore.isParentMode()
@@ -30,7 +34,17 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
   const [availableHearts, setAvailableHearts] = useState<number>(() =>
     globalScheduleStore.getAvailableHearts()
   );
+  const [availableStars, setAvailableStars] = useState<number>(() =>
+    globalScheduleStore.getAvailableStars()
+  );
+  const [pendingStarRedemptions, setPendingStarRedemptions] = useState<number>(() =>
+    globalScheduleStore.getPendingStarRedemptionCount()
+  );
+  const [celebrationContext, setCelebrationContext] = useState<StarCelebrationContext | null>(() =>
+    globalScheduleStore.getCelebrationContext()
+  );
 
+  const [pendingAwardDay, setPendingAwardDay] = useState<WeekdayNumber | null>(null);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [praiseModal, setPraiseModal] = useState<{
     isOpen: boolean;
@@ -84,11 +98,14 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
       setItems(globalScheduleStore.getItems());
       setIsParentMode(globalScheduleStore.isParentMode());
       setAvailableHearts(globalScheduleStore.getAvailableHearts());
+      setAvailableStars(globalScheduleStore.getAvailableStars());
+      setPendingStarRedemptions(globalScheduleStore.getPendingStarRedemptionCount());
+      setCelebrationContext(globalScheduleStore.getCelebrationContext());
     });
     return unsubscribe;
   }, []);
 
-  const handleSelectTab = (tab: 'today' | 'weekly') => {
+  const handleSelectTab = (tab: 'today' | 'weekly' | 'stars') => {
     window.location.hash = `#${tab}`;
     setActiveTab(tab);
   };
@@ -116,10 +133,17 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
         onOpenParentPin={() => setIsPinModalOpen(true)}
         onLockParentMode={() => globalScheduleStore.lockParentMode()}
         availableHearts={availableHearts}
+        availableStars={availableStars}
+        pendingStarRedemptions={pendingStarRedemptions}
       />
 
       <main className="flex-1 pb-12">
-        {activeTab === 'today' ? (
+        {activeTab === 'stars' ? (
+          <StarRewardShopView
+            store={globalScheduleStore}
+            onOpenParentPin={() => setIsPinModalOpen(true)}
+          />
+        ) : activeTab === 'today' ? (
           <TodayScheduleView
             items={todayItems}
             weekdayName={currentWeekdayInfo?.fullName || '오늘'}
@@ -131,6 +155,10 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
               })
             }
             onOpenEditModal={(target) => handleOpenEditModal(target || null, currentWeekday)}
+            onOpenParentPin={(day) => {
+              if (day) setPendingAwardDay(day as WeekdayNumber);
+              setIsPinModalOpen(true);
+            }}
           />
         ) : (
           <WeeklyGridView
@@ -145,11 +173,29 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
       {/* 6-Digit Master PIN Authentication Modal */}
       <ParentPinModal
         isOpen={isPinModalOpen}
-        onClose={() => setIsPinModalOpen(false)}
+        onClose={() => {
+          setIsPinModalOpen(false);
+          setPendingAwardDay(null);
+        }}
         onSuccess={() => {
-          // Store already transitioned to parent mode
+          setIsPinModalOpen(false);
+          if (pendingAwardDay) {
+            globalScheduleStore.awardDailyStar(pendingAwardDay);
+            setPendingAwardDay(null);
+          }
         }}
         store={globalScheduleStore}
+      />
+
+      {/* Star Celebration Modal (Daily +1⭐ or Weekly Bonus +2⭐ or Reward Approval) */}
+      <StarCelebrationModal
+        isOpen={celebrationContext !== null}
+        onClose={() => globalScheduleStore.clearCelebrationContext()}
+        onOpenStarShop={() => {
+          globalScheduleStore.clearCelebrationContext();
+          handleSelectTab('stars');
+        }}
+        context={celebrationContext}
       />
 
       {/* Praise Heart & Sticker Bottom Sheet / Modal */}

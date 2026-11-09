@@ -8,13 +8,14 @@ import {
   Unlock,
   ShieldCheck,
   Heart,
+  Star,
 } from 'lucide-react';
 import { getWeekdayNumber, getWeekKey } from '../domain/calendarUtils';
 import { WEEKDAYS } from '../types/schedule';
 
 export interface NavigationProps {
-  activeTab: 'today' | 'weekly';
-  onSelectTab: (tab: 'today' | 'weekly') => void;
+  activeTab: 'today' | 'weekly' | 'stars';
+  onSelectTab: (tab: 'today' | 'weekly' | 'stars') => void;
   currentDate?: Date;
   isSyncing?: boolean;
   onSync?: () => void;
@@ -22,6 +23,8 @@ export interface NavigationProps {
   onOpenParentPin?: () => void;
   onLockParentMode?: () => void;
   availableHearts?: number;
+  availableStars?: number;
+  pendingStarRedemptions?: number;
 }
 
 export const Navigation: React.FC<NavigationProps> = ({
@@ -34,6 +37,8 @@ export const Navigation: React.FC<NavigationProps> = ({
   onOpenParentPin,
   onLockParentMode,
   availableHearts = 0,
+  availableStars = 0,
+  pendingStarRedemptions = 0,
 }) => {
   const weekdayNum = getWeekdayNumber(currentDate);
   const weekdayInfo = WEEKDAYS.find((w) => w.number === weekdayNum);
@@ -73,6 +78,30 @@ export const Navigation: React.FC<NavigationProps> = ({
                 <span>{availableHearts}</span>
               </div>
             )}
+
+            <button
+              type="button"
+              onClick={() => onSelectTab('stars')}
+              data-testid="header-stars-badge"
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold transition-all border shadow-xs ${
+                activeTab === 'stars'
+                  ? 'bg-amber-500 text-white border-amber-600 shadow-sm'
+                  : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200/80'
+              }`}
+              title={`스타 상점 (보유 스타: ${availableStars}개)`}
+            >
+              <Star
+                className={`w-3.5 h-3.5 ${
+                  activeTab === 'stars'
+                    ? 'fill-yellow-200 text-yellow-200'
+                    : 'fill-amber-500 text-amber-500'
+                }`}
+              />
+              <span>{availableStars}</span>
+              {pendingStarRedemptions > 0 && (
+                <span className="w-2 h-2 rounded-full bg-red-600 ring-1 ring-white" />
+              )}
+            </button>
 
             {onSync && (
               <button
@@ -159,6 +188,20 @@ export const Navigation: React.FC<NavigationProps> = ({
           >
             <Grid className="w-4 h-4" />
             <span>주간 시간표</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="nav-tab-stars"
+            onClick={() => onSelectTab('stars')}
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200 ${
+              activeTab === 'stars'
+                ? 'bg-amber-500 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <Star className="w-4 h-4" />
+            <span>스타 상점</span>
           </button>
         </nav>
       </div>

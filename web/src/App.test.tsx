@@ -262,5 +262,60 @@ describe('App & Hash Navigation (Seam 2)', () => {
       expect(globalScheduleStore.isAdjustedThisWeek(w47Item!)).toBe(false);
       expect(globalScheduleStore.getCurrentWeekAdjustmentCount()).toBe(0);
     });
+
+    describe('Star Ledger, Hash Routing & Reward Shop Integration (Seam 3 / Issue 06)', () => {
+      it('navigates to #stars shop via header badge and tab, and displays star balance', async () => {
+        render(<App syncOnMount={false} />);
+
+        // Header star badge exists
+        const headerBadge = screen.getByTestId('header-stars-badge');
+        expect(headerBadge).toBeInTheDocument();
+        expect(headerBadge).toHaveTextContent('0');
+
+        // Click Star Shop tab in navigation
+        const starTab = screen.getByTestId('nav-tab-stars');
+        fireEvent.click(starTab);
+
+        expect(window.location.hash).toBe('#stars');
+        expect(screen.getByTestId('star-reward-shop-view')).toBeInTheDocument();
+        expect(screen.getByTestId('star-balance-hero-card')).toBeInTheDocument();
+      });
+
+      it('awards daily star upon completing all tasks and triggers celebration modal', async () => {
+        globalScheduleStore.setCurrentDate(new Date(2026, 10, 9)); // Monday
+        globalScheduleStore.unlockParentMode();
+
+        render(<App syncOnMount={false} />);
+
+        // Complete and verify all Monday items
+        const monItems = globalScheduleStore.getTodayItems().filter((it) => globalScheduleStore.isItemCheckable(it));
+        for (const item of monItems) {
+          if (!globalScheduleStore.isCompleted(item)) globalScheduleStore.toggleCompletion(item);
+          if (!globalScheduleStore.isParentVerified(item)) globalScheduleStore.toggleParentVerification(item);
+          for (const sub of item.subTasks) {
+            if (!globalScheduleStore.isSubTaskCompleted(sub)) globalScheduleStore.toggleSubTaskCompletion(sub, item);
+            if (!globalScheduleStore.isSubTaskParentVerified(sub)) globalScheduleStore.toggleSubTaskParentVerification(sub, item);
+          }
+        }
+
+        // Stamp board claim button should be visible
+        const claimBtn = await screen.findByTestId('claim-daily-star-button');
+        expect(claimBtn).toBeInTheDocument();
+
+        fireEvent.click(claimBtn);
+
+        // Celebration modal should pop up!
+        const celebration = await screen.findByTestId('star-celebration-modal');
+        expect(celebration).toBeInTheDocument();
+        expect(screen.getByText('⭐ 오늘의 올클리어 스타 획득!')).toBeInTheDocument();
+
+        // Dismiss modal by clicking 확인
+        fireEvent.click(screen.getByRole('button', { name: '확인' }));
+        expect(screen.queryByTestId('star-celebration-modal')).not.toBeInTheDocument();
+
+        // Header star badge updated to 1
+        expect(screen.getByTestId('header-stars-badge')).toHaveTextContent('1');
+      });
+    });
   });
 });
