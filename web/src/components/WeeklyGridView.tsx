@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit3, RotateCcw, AlertTriangle } from 'lucide-react';
+import { Plus, Edit3, RotateCcw, AlertTriangle, Printer } from 'lucide-react';
 import { ScheduleItem, WEEKDAYS, WeekdayNumber } from '../types/schedule';
 import { CATEGORIES } from '../types/schedule';
 import { formatTime, compareScheduleItemsByTime } from '../domain/calendarUtils';
@@ -10,6 +10,7 @@ export interface WeeklyGridViewProps {
   currentWeekday: WeekdayNumber;
   store?: ScheduleStore;
   onOpenEditModal?: (item: ScheduleItem | null, weekday?: WeekdayNumber) => void;
+  onOpenPrint?: () => void;
 }
 
 export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
@@ -17,6 +18,7 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
   currentWeekday,
   store = globalScheduleStore,
   onOpenEditModal,
+  onOpenPrint,
 }) => {
   const [, setRenderVersion] = useState(0);
 
@@ -46,17 +48,31 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
           </p>
         </div>
 
-        {isParentMode && onOpenEditModal && (
-          <button
-            type="button"
-            data-testid="weekly-add-item-btn"
-            onClick={() => onOpenEditModal(null, currentWeekday)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 transition-all active:scale-95"
-          >
-            <Plus className="w-4 h-4" />
-            <span>새 일정 추가</span>
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {onOpenPrint && (
+            <button
+              type="button"
+              data-testid="weekly-print-btn"
+              onClick={onOpenPrint}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs border border-slate-200 shadow-2xs transition-all active:scale-95"
+            >
+              <Printer className="w-3.5 h-3.5 text-slate-500" />
+              <span>A4 1페이지 인쇄</span>
+            </button>
+          )}
+
+          {isParentMode && onOpenEditModal && (
+            <button
+              type="button"
+              data-testid="weekly-add-item-btn"
+              onClick={() => onOpenEditModal(null, currentWeekday)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 transition-all active:scale-95"
+            >
+              <Plus className="w-4 h-4" />
+              <span>새 일정 추가</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Weekly Adjustments Banner (if adjustments exist) */}

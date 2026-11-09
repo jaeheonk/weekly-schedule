@@ -317,5 +317,57 @@ describe('App & Hash Navigation (Seam 2)', () => {
         expect(screen.getByTestId('header-stars-badge')).toHaveTextContent('1');
       });
     });
+
+    describe('A4 Landscape Print Engine & Modal Navigation Integration (Seam 4 / Issue 07)', () => {
+      it('opens print preview modal when clicking header print button and sets hash to #print', () => {
+        render(<App syncOnMount={false} />);
+
+        const printBtn = screen.getByTestId('header-print-button');
+        expect(printBtn).toBeInTheDocument();
+
+        fireEvent.click(printBtn);
+
+        expect(window.location.hash).toBe('#print');
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect(screen.getByText('1페이지 시간표 인쇄')).toBeInTheDocument();
+        expect(screen.getByTestId('printable-sheet')).toBeInTheDocument();
+
+        // Close modal
+        const closeBtn = screen.getByRole('button', { name: /닫기/i });
+        fireEvent.click(closeBtn);
+
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+        expect(window.location.hash).toBe('#today');
+      });
+
+      it('opens print preview modal directly when window hash changes to #print', () => {
+        render(<App syncOnMount={false} />);
+
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+        // Change hash to #print
+        window.location.hash = '#print';
+        fireEvent(window, new HashChangeEvent('hashchange'));
+
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        expect(screen.getByText('1페이지 시간표 인쇄')).toBeInTheDocument();
+      });
+
+      it('opens print preview modal from WeeklyGridView print button', () => {
+        render(<App syncOnMount={false} />);
+
+        // Switch to weekly view
+        const weeklyTab = screen.getByRole('button', { name: /주간 시간표/i });
+        fireEvent.click(weeklyTab);
+
+        const weeklyPrintBtn = screen.getByTestId('weekly-print-btn');
+        expect(weeklyPrintBtn).toBeInTheDocument();
+
+        fireEvent.click(weeklyPrintBtn);
+
+        expect(window.location.hash).toBe('#print');
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+      });
+    });
   });
 });

@@ -8,6 +8,7 @@ import { SyncToast } from './components/SyncToast';
 import { ParentPinModal } from './components/ParentPinModal';
 import { PraiseHeartModal } from './components/PraiseHeartModal';
 import { ScheduleEditModal } from './components/ScheduleEditModal';
+import { SchedulePrintModal } from './components/SchedulePrintModal';
 import { useCloudSync } from './hooks/useCloudSync';
 import { globalScheduleStore } from './domain/scheduleStore';
 import { compareScheduleItemsByTime } from './domain/calendarUtils';
@@ -26,7 +27,10 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
     return 'today';
   };
 
+  const isPrintHash = (): boolean => window.location.hash.toLowerCase() === '#print';
+
   const [activeTab, setActiveTab] = useState<'today' | 'weekly' | 'stars'>(getTabFromHash);
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState<boolean>(isPrintHash);
   const [items, setItems] = useState<ScheduleItem[]>(() => globalScheduleStore.getItems());
   const [isParentMode, setIsParentMode] = useState<boolean>(() =>
     globalScheduleStore.isParentMode()
@@ -86,12 +90,30 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
 
   useEffect(() => {
     const onHashChange = () => {
-      setActiveTab(getTabFromHash());
+      const hash = window.location.hash.toLowerCase();
+      if (hash === '#print') {
+        setIsPrintModalOpen(true);
+      } else {
+        setIsPrintModalOpen(false);
+        setActiveTab(getTabFromHash());
+      }
     };
 
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
+
+  const handleOpenPrint = () => {
+    window.location.hash = '#print';
+    setIsPrintModalOpen(true);
+  };
+
+  const handleClosePrint = () => {
+    setIsPrintModalOpen(false);
+    if (window.location.hash.toLowerCase() === '#print') {
+      window.location.hash = `#${activeTab}`;
+    }
+  };
 
   useEffect(() => {
     const unsubscribe = globalScheduleStore.subscribe(() => {
@@ -129,6 +151,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
         currentDate={currentDate}
         isSyncing={isSyncing}
         onSync={() => triggerSync({ isManual: true })}
+        onOpenPrint={handleOpenPrint}
         isParentMode={isParentMode}
         onOpenParentPin={() => setIsPinModalOpen(true)}
         onLockParentMode={() => globalScheduleStore.lockParentMode()}
@@ -166,6 +189,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
             currentWeekday={currentWeekday}
             store={globalScheduleStore}
             onOpenEditModal={handleOpenEditModal}
+            onOpenPrint={handleOpenPrint}
           />
         )}
       </main>
@@ -219,6 +243,13 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
         initialItem={editModal.initialItem}
         defaultWeekday={editModal.defaultWeekday}
         initialScope={editModal.initialScope}
+        store={globalScheduleStore}
+      />
+
+      {/* A4 1-Page Landscape Print Engine Modal */}
+      <SchedulePrintModal
+        isOpen={isPrintModalOpen}
+        onClose={handleClosePrint}
         store={globalScheduleStore}
       />
     </div>

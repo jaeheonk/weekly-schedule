@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Heart,
   Star,
+  Printer,
 } from 'lucide-react';
 import { getWeekdayNumber, getWeekKey } from '../domain/calendarUtils';
 import { WEEKDAYS } from '../types/schedule';
@@ -19,6 +20,7 @@ export interface NavigationProps {
   currentDate?: Date;
   isSyncing?: boolean;
   onSync?: () => void;
+  onOpenPrint?: () => void;
   isParentMode?: boolean;
   onOpenParentPin?: () => void;
   onLockParentMode?: () => void;
@@ -33,6 +35,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   currentDate = new Date(),
   isSyncing = false,
   onSync,
+  onOpenPrint,
   isParentMode = false,
   onOpenParentPin,
   onLockParentMode,
@@ -119,6 +122,20 @@ export const Navigation: React.FC<NavigationProps> = ({
                   }`}
                 />
                 <span className="hidden md:inline">{isSyncing ? '동기화 중' : '동기화'}</span>
+              </button>
+            )}
+
+            {onOpenPrint && (
+              <button
+                type="button"
+                onClick={onOpenPrint}
+                title="1페이지 시간표 인쇄 (⌘P)"
+                aria-label="시간표 인쇄"
+                data-testid="header-print-button"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-100 hover:bg-slate-200/80 active:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors border border-slate-200/60"
+              >
+                <Printer className="w-3.5 h-3.5 text-slate-500" />
+                <span className="hidden md:inline">인쇄</span>
               </button>
             )}
 

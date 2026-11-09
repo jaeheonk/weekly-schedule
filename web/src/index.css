@@ -12,3 +12,52 @@ body {
   overscroll-behavior-y: none;
   background-color: #f8fafc;
 }
+
+/* Print engine styles for A4 1-Page Landscape */
+@page {
+  size: landscape;
+  margin: 8mm;
+}
+
+@media print {
+  /* Hide all interactive, navigation, and background UI elements */
+  header,
+  nav,
+  main,
+  aside,
+  footer,
+  .print\:hidden,
+  [data-testid="header-sync-button"],
+  [data-testid="sync-toast-container"],
+  button {
+    display: none !important;
+  }
+
+  html,
+  body {
+    width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    overflow: hidden !important;
+  }
+
+  /* Fixed landscape sheet fitting exactly onto single A4 page */
+  .printable-sheet {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 100% !important;
+    height: 100% !important;
+    max-height: 194mm !important;
+    margin: 0 !important;
+    padding: 2mm 3mm !important;
+    box-shadow: none !important;
+    border: 1px solid #94a3b8 !important;
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+    page-break-after: avoid !important;
+  }
+}
