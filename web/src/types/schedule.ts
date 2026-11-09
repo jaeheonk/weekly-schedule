@@ -1,5 +1,10 @@
 export type WeekdayNumber = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
+/**
+ * ISO-8601 WeekKey string format: "YYYY-Ww" or "YYYY-Www" (e.g. "2026-W46")
+ */
+export type WeekKey = string;
+
 export interface WeekdayInfo {
   number: WeekdayNumber;
   shortName: string; // "월", "화", ...
@@ -98,6 +103,6 @@ export interface ScheduleItem {
   subTasks: SubTask[];
   isNotificationEnabled: boolean;
   notificationLeadMinutes: number[];
-  targetWeekKey?: string | null;
+  targetWeekKey?: WeekKey | null;
   updatedAt: number; // Unix epoch seconds
 }

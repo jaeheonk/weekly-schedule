@@ -1,16 +1,10 @@
-import { ScheduleItem, WeekdayNumber } from '../types/schedule';
-import { getWeekKey, getWeekdayNumber, formatTime, formatTimeRange, compareScheduleItemsByTime } from './calendarUtils';
-import { getDefaultScheduleItems } from './defaultSchedule';
-
-export { getWeekKey, getWeekdayNumber, formatTime, formatTimeRange, compareScheduleItemsByTime };
+import { ScheduleItem, WeekdayNumber, WeekKey } from '../types/schedule';
+import { getWeekdayNumber, getWeekKey, compareScheduleItemsByTime } from './calendarUtils';
+import { getMasterScheduleItems } from './defaultSchedule';
 
 export const STORAGE_KEYS = {
   ITEMS: 'weekly_schedule_items',
-  WEEKLY_OVERRIDES: 'weekly_schedule_weekly_overrides',
-  COMPLETED_KEYS: 'weekly_schedule_completed_keys',
-  PARENT_PIN: 'weekly_schedule_parent_pin',
-  DEVICE_ROLE: 'weekly_schedule_device_role',
-};
+} as const;
 
 export interface ScheduleStoreOptions {
   currentDate?: Date;
@@ -52,10 +46,10 @@ export class ScheduleStore {
         }
       }
     } catch {
-      // ignore storage parse errors and fall back to default
+      // ignore storage parse errors and fall back to master schedule
     }
 
-    this.items = getDefaultScheduleItems();
+    this.items = getMasterScheduleItems();
     this.saveItems();
   }
 
@@ -81,7 +75,7 @@ export class ScheduleStore {
     this.notify();
   }
 
-  public getCurrentWeekKey(): string {
+  public getCurrentWeekKey(): WeekKey {
     return getWeekKey(this.currentDate);
   }
 

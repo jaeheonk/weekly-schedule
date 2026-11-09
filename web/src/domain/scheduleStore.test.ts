@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { getWeekKey, getWeekdayNumber, ScheduleStore } from './scheduleStore';
+import { getWeekKey, getWeekdayNumber } from './calendarUtils';
+import { ScheduleStore } from './scheduleStore';
+import { deterministicUUID } from './defaultSchedule';
 
 describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
   beforeEach(() => {
@@ -7,11 +9,14 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
   });
 
   describe('CalendarUtils', () => {
-    it('calculates ISO-8601 week key correctly', () => {
+    it('calculates ISO-8601 week key matching Swift format (unpadded week number)', () => {
       // 2026-11-09 is a Monday in Week 46 of 2026
-      const date = new Date(2026, 10, 9); // Month is 0-indexed: 10 = Nov
-      const weekKey = getWeekKey(date);
-      expect(weekKey).toBe('2026-W46');
+      const nov9 = new Date(2026, 10, 9);
+      expect(getWeekKey(nov9)).toBe('2026-W46');
+
+      // 2026-01-26 is a Monday in Week 5 of 2026 (must be unpadded '2026-W5' matching Swift)
+      const jan26 = new Date(2026, 0, 26);
+      expect(getWeekKey(jan26)).toBe('2026-W5');
     });
 
     it('maps JavaScript date day to Monday=1 ... Sunday=7', () => {
@@ -22,7 +27,16 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
     });
   });
 
-  describe('Default Master Schedule Loading', () => {
+  describe('Deterministic UUID (RFC 4122 v4 via SHA-256)', () => {
+    it('generates deterministic UUIDs 100% identical to Swift DefaultScheduleData', () => {
+      // Exact seed test from Swift: deterministicUUID(seed: "weekly-schedule-default-v2-1|7:0|코딱지")
+      const seed = 'weekly-schedule-default-v2-1|7:0|코딱지';
+      const uuid = deterministicUUID(seed);
+      expect(uuid).toBe('5d829e4e-6ac8-438d-b00d-8d5207eb2254');
+    });
+  });
+
+  describe('Master Schedule Loading', () => {
     it('loads Master Schedule when local storage has no cached items', () => {
       const store = new ScheduleStore();
       const items = store.getItems();

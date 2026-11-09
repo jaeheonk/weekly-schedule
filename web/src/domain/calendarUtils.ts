@@ -1,4 +1,4 @@
-import { WeekdayNumber } from '../types/schedule';
+import { WeekdayNumber, WeekKey } from '../types/schedule';
 
 /**
  * Returns the ISO-8601 Weekday number (1 = Monday, ..., 7 = Sunday)
@@ -9,9 +9,10 @@ export function getWeekdayNumber(date: Date = new Date()): WeekdayNumber {
 }
 
 /**
- * Returns the ISO-8601 week key: "YYYY-Www" (e.g., "2026-W46")
+ * Returns the ISO-8601 week key: "YYYY-Ww" (e.g. "2026-W46", "2026-W5")
+ * Conforms identically to Swift's ScheduleCalendarUtils.weekKey: "\(year)-W\(week)"
  */
-export function getWeekKey(date: Date = new Date()): string {
+export function getWeekKey(date: Date = new Date()): WeekKey {
   // Target date
   const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
   // ISO week date weeks start on Monday, so correct the day number
@@ -29,8 +30,7 @@ export function getWeekKey(date: Date = new Date()): string {
   // Number of days between first Thursday and current Thursday divided by 7 + 1
   const weekNumber = 1 + Math.ceil((firstThursday - target.getTime()) / (7 * 24 * 3600 * 1000));
   const year = new Date(firstThursday).getUTCFullYear();
-  const paddedWeek = String(weekNumber).padStart(2, '0');
-  return `${year}-W${paddedWeek}`;
+  return `${year}-W${weekNumber}`;
 }
 
 /**
@@ -45,11 +45,28 @@ export function formatTime(hour: number, minute: number): string {
   return `${period} ${displayHour}:${String(minute).padStart(2, '0')}`;
 }
 
+export interface TimeSlot {
+  startHour: number;
+  startMinute: number;
+  endHour: number;
+  endMinute: number;
+}
+
 /**
  * Formats time range: "오후 3시 ~ 오후 4시"
  */
-export function formatTimeRange(startHour: number, startMinute: number, endHour: number, endMinute: number): string {
-  return `${formatTime(startHour, startMinute)} ~ ${formatTime(endHour, endMinute)}`;
+export function formatTimeRange(startHour: number, startMinute: number, endHour: number, endMinute: number): string;
+export function formatTimeRange(slot: TimeSlot): string;
+export function formatTimeRange(
+  a: number | TimeSlot,
+  b?: number,
+  c?: number,
+  d?: number
+): string {
+  if (typeof a === 'object') {
+    return `${formatTime(a.startHour, a.startMinute)} ~ ${formatTime(a.endHour, a.endMinute)}`;
+  }
+  return `${formatTime(a, b ?? 0)} ~ ${formatTime(c ?? 0, d ?? 0)}`;
 }
 
 /**

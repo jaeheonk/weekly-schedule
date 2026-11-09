@@ -13,13 +13,15 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({ items, currentWe
     <div data-testid="weekly-view" className="max-w-7xl mx-auto px-4 py-6">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-slate-900">주간 시간표</h2>
-          <p className="text-xs text-slate-500 mt-0.5">월요일부터 일요일까지 한눈에 확인하는 전체 일정</p>
+          <h2 className="text-xl font-bold text-slate-900">주간 시간표 (와이드 그리드)</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            월요일부터 일요일까지 시간 블록별 리듬을 한눈에 파악하는 주간 와이드 뷰
+          </p>
         </div>
       </div>
 
       <div className="overflow-x-auto pb-4">
-        <div className="min-w-[840px] grid grid-cols-7 gap-3">
+        <div className="min-w-[880px] grid grid-cols-7 gap-3">
           {WEEKDAYS.map((weekday) => {
             const isToday = weekday.number === currentWeekday;
             const dayItems = items
@@ -30,9 +32,9 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({ items, currentWe
               <div
                 key={weekday.number}
                 data-testid={`weekly-col-${weekday.shortName}`}
-                className={`rounded-2xl border flex flex-col min-h-[500px] transition-all ${
+                className={`rounded-2xl border flex flex-col min-h-[560px] transition-all ${
                   isToday
-                    ? 'bg-blue-50/50 border-blue-300 shadow-sm'
+                    ? 'bg-blue-50/40 border-blue-300 shadow-sm'
                     : 'bg-white border-slate-200'
                 }`}
               >
@@ -59,8 +61,8 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({ items, currentWe
                   </span>
                 </div>
 
-                {/* Day Items Column */}
-                <div className="p-2 space-y-2 flex-1">
+                {/* Day Items Column with visual time slots */}
+                <div className="p-2 space-y-2.5 flex-1 flex flex-col">
                   {dayItems.length === 0 ? (
                     <div className="h-full flex items-center justify-center text-[11px] text-slate-400 py-8">
                       일정 없음
@@ -71,31 +73,54 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({ items, currentWe
                       const startTime = formatTime(item.startHour, item.startMinute);
                       const endTime = formatTime(item.endHour, item.endMinute);
 
+                      const durationMin = Math.max(
+                        15,
+                        item.endHour * 60 + item.endMinute - (item.startHour * 60 + item.startMinute)
+                      );
+                      const durationText =
+                        durationMin >= 60
+                          ? durationMin % 60 === 0
+                            ? `${Math.floor(durationMin / 60)}시간`
+                            : `${Math.floor(durationMin / 60)}시간 ${durationMin % 60}분`
+                          : `${durationMin}분`;
+
+                      // Visually scale height slightly based on duration (from 56px to 130px)
+                      const cardMinHeight = Math.min(130, Math.max(56, Math.round(durationMin * 0.95)));
+
                       return (
                         <div
                           key={item.id}
-                          className="rounded-xl p-2.5 text-left border shadow-2xs transition-transform hover:-translate-y-0.5"
+                          className="rounded-xl p-2.5 text-left border shadow-2xs transition-all hover:-translate-y-0.5 flex flex-col justify-between"
                           style={{
                             backgroundColor: cat.softBackgroundColor,
-                            borderColor: `${cat.color}40`,
+                            borderColor: `${cat.color}45`,
+                            borderLeftWidth: '4px',
+                            borderLeftColor: cat.color,
+                            minHeight: `${cardMinHeight}px`,
                           }}
                         >
-                          <div className="flex items-center justify-between text-[10px] font-semibold mb-1">
-                            <span style={{ color: cat.color }}>{cat.title}</span>
-                            <span className="text-slate-500">{startTime}</span>
-                          </div>
-                          <div className="font-bold text-xs text-slate-900 leading-tight">
-                            {item.title}
-                          </div>
-                          <div className="text-[10px] text-slate-500 mt-1">
-                            {startTime} ~ {endTime}
-                          </div>
-                          {item.subTasks && item.subTasks.length > 0 && (
-                            <div className="text-[10px] text-slate-500 mt-1 flex items-center gap-1">
-                              <span className="w-1 h-1 rounded-full bg-slate-400"></span>
-                              <span>세부 할 일 {item.subTasks.length}개</span>
+                          <div>
+                            <div className="flex items-center justify-between text-[10px] font-semibold mb-1">
+                              <span style={{ color: cat.color }}>{cat.title}</span>
+                              <span className="text-slate-500 font-mono text-[9px] bg-white/70 px-1 py-0.2 rounded">
+                                {durationText}
+                              </span>
                             </div>
-                          )}
+                            <div className="font-bold text-xs text-slate-900 leading-tight">
+                              {item.title}
+                            </div>
+                          </div>
+
+                          <div className="mt-2 pt-1 border-t border-black/5 flex items-center justify-between text-[10px] text-slate-500">
+                            <span>
+                              {startTime} ~ {endTime}
+                            </span>
+                            {item.subTasks && item.subTasks.length > 0 && (
+                              <span className="text-[9px] bg-white/80 px-1 py-0.2 rounded text-slate-600 font-medium">
+                                할 일 {item.subTasks.length}
+                              </span>
+                            )}
+                          </div>
                         </div>
                       );
                     })

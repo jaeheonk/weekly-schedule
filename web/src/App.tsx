@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Navigation } from './components/Navigation';
 import { TodayScheduleView } from './components/TodayScheduleView';
 import { WeeklyGridView } from './components/WeeklyGridView';
-import { globalScheduleStore, compareScheduleItemsByTime } from './domain/scheduleStore';
+import { globalScheduleStore } from './domain/scheduleStore';
+import { compareScheduleItemsByTime } from './domain/calendarUtils';
 import { ScheduleItem, WEEKDAYS } from './types/schedule';
 
 export const App: React.FC = () => {
