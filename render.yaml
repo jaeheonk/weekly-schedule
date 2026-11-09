@@ -1,0 +1,22 @@
+# Render Blueprint for the weekly-schedule sync proxy.
+# Create it from the Render dashboard: New > Blueprint, then select this repo.
+# https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: weekly-schedule-sync
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      # Prompted on the first Blueprint sync. Do not commit the token value.
+      - key: BLOB_READ_WRITE_TOKEN
+        sync: false
+      # Render forwards public HTTP to this port. The server reads process.env.PORT.
+      - key: PORT
+        value: "10000"
+      - key: NODE_VERSION
+        value: "20"

@@ -142,6 +142,130 @@ describe('useCloudSync Hook', () => {
     expect(preventDefault).toHaveBeenCalled();
   });
 
+  it('shows 클라우드 동기화 중... through a cold-start wait and then recovers', async () => {
+    let resolveFetch: (value: {
+      latest: null;
+      snapshot: null;
+      allBlobs: [];
+    }) => void = () => {};
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        })
+    );
+    const uploadSpy = vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({
+      url: 'https://blob.test/state.json',
+      pathname: 'families/family-main/state.json',
+    });
+
+    const { result } = renderHook(() =>
+      useCloudSync({ store, syncService, pollingIntervalMs: 0, syncOnMount: false })
+    );
+
+    act(() => {
+      void result.current.triggerSync({ isManual: false });
+    });
+
+    expect(result.current.syncStatus).toBe('idle');
+    expect(result.current.toastMessage).toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+
+    expect(result.current.syncStatus).toBe('syncing');
+    expect(result.current.toastMessage).toContain('동기화 중...');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50_000);
+    });
+
+    expect(result.current.syncStatus).toBe('syncing');
+    expect(result.current.toastMessage).toContain('동기화 중...');
+
+    await act(async () => {
+      resolveFetch({ latest: null, snapshot: null, allBlobs: [] });
+    });
+
+    expect(uploadSpy).toHaveBeenCalledTimes(1);
+    expect(result.current.syncStatus).toBe('success');
+    expect(result.current.toastMessage).toContain('클라우드 동기화 완료');
+  });
+
+  it('recovers the cold-start toast when the remote 클라우드 동기화 스냅샷 is unchanged', async () => {
+    const pathname = 'families/family-main/state-same.json';
+    const snapshot = store.makeCurrentSnapshot();
+    const remote = {
+      latest: { url: 'https://blob.test/state-same.json', pathname },
+      snapshot,
+      allBlobs: [] as [],
+    };
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue(remote);
+    vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({
+      url: 'https://blob.test/state-same.json',
+      pathname,
+    });
+
+    const { result } = renderHook(() =>
+      useCloudSync({ store, syncService, pollingIntervalMs: 0, syncOnMount: false })
+    );
+
+    await act(async () => {
+      await result.current.triggerSync({ isManual: false, forceUpload: true });
+    });
+
+    let resolveSlowFetch: (value: typeof remote) => void = () => {};
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSlowFetch = resolve;
+        })
+    );
+    const uploadSpy = vi.spyOn(syncService, 'uploadSnapshot');
+
+    act(() => {
+      void result.current.triggerSync({ isManual: false });
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+
+    expect(result.current.toastMessage).toContain('동기화 중...');
+
+    await act(async () => {
+      resolveSlowFetch(remote);
+    });
+
+    expect(uploadSpy).not.toHaveBeenCalled();
+    expect(result.current.syncStatus).toBe('success');
+    expect(result.current.toastMessage).toContain('클라우드 동기화 완료');
+  });
+
+  it('keeps a fast background sync quiet', async () => {
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
+      latest: null,
+      snapshot: null,
+      allBlobs: [],
+    });
+    vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({
+      url: 'https://blob.test/state.json',
+      pathname: 'families/family-main/state.json',
+    });
+
+    const { result } = renderHook(() =>
+      useCloudSync({ store, syncService, pollingIntervalMs: 0, syncOnMount: false })
+    );
+
+    await act(async () => {
+      await result.current.triggerSync({ isManual: false });
+    });
+
+    expect(result.current.syncStatus).toBe('idle');
+    expect(result.current.toastMessage).toBeNull();
+  });
+
   it('triggers sync on visibility change when returning to tab', async () => {
     const fetchSpy = vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
       latest: null,

@@ -65,6 +65,8 @@ export class VercelBlobSyncService {
   public async fetchLatestSnapshot(familyCode: string): Promise<SyncLatestResult> {
     const safeFamily = this.familyCodeForRequest(familyCode);
     const query = new URLSearchParams({ familyCode: safeFamily });
+    // No AbortSignal. A Render free-tier cold start can take about a minute,
+    // and cancelling here would surface a timeout before the proxy answers.
     const response = await fetch(`${this.apiBaseUrl}/api/sync/latest?${query.toString()}`, {
       method: 'GET',
       cache: 'no-store',

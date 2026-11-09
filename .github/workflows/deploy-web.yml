@@ -44,9 +44,17 @@ jobs:
       - name: Run Unit Tests
         run: npm run test
 
+      # Optional repository secret: VITE_SYNC_API_URL
+      # Set this to the Render service origin with no path, for example
+      # https://weekly-schedule-sync.onrender.com
+      # Vite inlines it at build time. An empty value keeps relative /api
+      # requests, which only the local Vite proxy serves. GitHub Pages needs
+      # the secret so the browser calls the Render proxy. Do not put
+      # BLOB_READ_WRITE_TOKEN here. See docs/render-deployment.md.
       - name: Build Web Application
         env:
           VITE_BASE_URL: /weekly-schedule/
+          VITE_SYNC_API_URL: ${{ secrets.VITE_SYNC_API_URL }}
         run: npm run build
 
       - name: Upload Pages Artifact

@@ -319,7 +319,7 @@ describe('local Vite proxy', () => {
       await waitForLog(
         viteProcess,
         [
-          new RegExp(`Listening on http://localhost:${proxyPort}`),
+          new RegExp(`Listening on http://0\\.0\\.0\\.0:${proxyPort}`),
           new RegExp(`Local:\\s+http://(?:localhost|127\\.0\\.0\\.1):${vitePort}`),
         ],
         25_000

@@ -81,6 +81,54 @@ describe('VercelBlobSyncService proxy client', () => {
     expect(result.allBlobs).toHaveLength(2);
   });
 
+  it('does not abort a proxy request that waits out a Render cold start', async () => {
+    vi.useFakeTimers();
+    try {
+      let resolveFetch: (value: {
+        ok: boolean;
+        status: number;
+        json: () => Promise<{ latest: null; snapshot: null; allBlobs: [] }>;
+      }) => void = () => {};
+      const mockFetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+        expect(init?.signal).toBeUndefined();
+        return new Promise((resolve) => {
+          resolveFetch = resolve;
+        });
+      });
+      globalThis.fetch = mockFetch;
+
+      const service = new VercelBlobSyncService('https://weekly-schedule-sync.onrender.com');
+      const pending = service.fetchLatestSnapshot('family-main');
+      let settled = false;
+      pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        }
+      );
+
+      await vi.advanceTimersByTimeAsync(50_000);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+
+      resolveFetch({
+        ok: true,
+        status: 200,
+        json: async () => ({ latest: null, snapshot: null, allBlobs: [] }),
+      });
+      await expect(pending).resolves.toEqual({
+        latest: null,
+        snapshot: null,
+        allBlobs: [],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('prefixes proxy requests with VITE_SYNC_API_URL when a production origin is configured', async () => {
     vi.stubEnv('VITE_SYNC_API_URL', 'https://sync.example.com/');
     const mockFetch = vi.fn().mockResolvedValue({

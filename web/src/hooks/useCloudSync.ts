@@ -3,6 +3,11 @@ import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
 import { VercelBlobSyncService } from '../services/vercelBlobSync';
 import { SyncStatus } from '../components/SyncToast';
 
+// Render's free web service sleeps after 15 minutes and can take about a minute
+// to answer the request that wakes it. Show the syncing toast once a request
+// has been waiting, and leave the request running until the proxy responds.
+const SLOW_SYNC_NOTICE_MS = 3000;
+
 export interface UseCloudSyncOptions {
   store?: ScheduleStore;
   syncService?: VercelBlobSyncService;
@@ -56,10 +61,23 @@ export function useCloudSync({
       }
 
       isSyncingRef.current = true;
+      let announcedSlowSync = options.isManual === true;
       if (options.isManual) {
         setSyncStatus('syncing');
         setToastMessage('클라우드 동기화 중...');
       }
+      const slowNoticeTimer = setTimeout(() => {
+        if (!isSyncingRef.current) return;
+        announcedSlowSync = true;
+        setSyncStatus('syncing');
+        setToastMessage('클라우드 동기화 중...');
+      }, SLOW_SYNC_NOTICE_MS);
+
+      const showRecoveryToast = () => {
+        setSyncStatus('success');
+        setToastMessage('클라우드 동기화 완료');
+        scheduleToastDismiss(3500);
+      };
 
       try {
         const familyCode = store.getFamilyCode();
@@ -76,6 +94,9 @@ export function useCloudSync({
           latest &&
           latest.pathname === lastSyncedBlobPathnameRef.current
         ) {
+          if (announcedSlowSync) {
+            showRecoveryToast();
+          }
           return;
         }
 
@@ -145,10 +166,8 @@ export function useCloudSync({
           setSyncStatus('success');
           setToastMessage(eventToastMessage);
           scheduleToastDismiss(4000);
-        } else if (options.isManual) {
-          setSyncStatus('success');
-          setToastMessage('클라우드 동기화 완료');
-          scheduleToastDismiss(3500);
+        } else if (options.isManual || announcedSlowSync) {
+          showRecoveryToast();
         } else {
           // Quiet background sync: no intrusive toast
           setSyncStatus('idle');
@@ -161,6 +180,7 @@ export function useCloudSync({
         setToastMessage(errorMsg);
         scheduleToastDismiss(4500);
       } finally {
+        clearTimeout(slowNoticeTimer);
         isSyncingRef.current = false;
       }
     },
