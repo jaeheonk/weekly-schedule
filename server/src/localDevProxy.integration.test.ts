@@ -190,7 +190,7 @@ describe('local Vite proxy', () => {
   });
 
   it(
-    'saves an edited schedule through the Vite dev server and loads it back as schemaVersion 5',
+    'saves a 클라우드 동기화 스냅샷 through the Vite dev server and loads it back as schemaVersion 5',
     async () => {
       const proxyPort = await freePort();
       const vitePort = await freePort();

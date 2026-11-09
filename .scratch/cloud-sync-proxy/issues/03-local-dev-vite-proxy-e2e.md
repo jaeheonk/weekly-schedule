@@ -28,7 +28,7 @@ Status: resolved
    - `PORT`를 바꾸면 프록시 대상도 그 포트로 맞춥니다. Vite 포트는 `VITE_DEV_PORT`로 바꿉니다.
 
 3. **검증**:
-   - 통합 테스트 3개: Vite를 거친 일정 수정본이 schemaVersion 5로 다시 읽히는지, 기본 프록시 대상이 `http://localhost:3001`인지, `dev:all`의 `/api/sync/latest`가 HTML이 아닌 프록시 JSON인지.
-   - 실제 Vercel Blob에 가족 코드 `proxy-e2e`로 수정 일정을 올리고 다시 읽어 schemaVersion 5와 제목·요일·카테고리를 확인한 뒤 테스트 blob은 삭제했습니다. `family-main` pathname은 변하지 않았습니다.
+   - 통합 테스트 3개: Vite를 거친 클라우드 동기화 스냅샷이 schemaVersion 5로 다시 읽히는지, 기본 프록시 대상이 `http://localhost:3001`인지, `dev:all`의 `/api/sync/latest`가 HTML이 아닌 프록시 JSON인지.
+   - 실제 Vercel Blob에 가족 코드 `proxy-e2e`로 클라우드 동기화 스냅샷을 올리고 다시 읽어 schemaVersion 5와 제목·요일·카테고리를 확인한 뒤 테스트 blob은 삭제했습니다. `family-main` pathname은 변하지 않았습니다.
    - 서버 타입체크와 테스트 26개, 웹 타입체크와 테스트 124개가 통과했습니다.
    - Safari에서 토스트를 확인하지 못했습니다. Safari 설정의 Developer → Allow remote automation이 꺼져 있고, `safaridriver --enable`은 관리자 암호가 필요해 실패했습니다. 그 설정을 켠 뒤 `cd web && npm run dev:all`로 띄우고 Safari에서 `http://localhost:5173/weekly-schedule/`의 동기화 버튼을 누르면 "클라우드 동기화 완료"를 볼 수 있습니다. 이 머신의 3001 포트는 다른 앱이 사용 중이므로, 그때는 `PORT=3011 npm run dev:all`처럼 빈 포트를 지정하면 됩니다.
