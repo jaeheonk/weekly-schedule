@@ -1,162 +1,147 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { VercelBlobSyncService } from './vercelBlobSync';
 import { CloudSyncSnapshot } from '../types/snapshot';
 
-describe('VercelBlobSyncService', () => {
-  const originalFetch = globalThis.fetch;
+const remoteSnapshot: CloudSyncSnapshot = {
+  schemaVersion: 5,
+  familyCode: 'family-main',
+  updatedAt: 1700000000,
+  updatedByRole: '웹',
+  updatedByDeviceId: 'web-1234',
+  parentPinCode: '160125',
+  parentPinUpdatedAt: 1700000000,
+  items: [],
+  deletedItemTimestamps: {},
+  weeklyOverrides: {},
+  completionFlags: {},
+  subTaskCompletionFlags: {},
+  parentVerifiedFlags: {},
+  parentVerifiedSubTaskFlags: {},
+  itemReactions: {},
+  praiseNotes: [],
+  rewardRedemptions: [],
+  archivedEarnedHearts: 0,
+  rewardPresets: [],
+  deletedRewardPresetTimestamps: {},
+  starTransactions: [],
+  starRedemptionRequests: [],
+  starRewardPresets: [],
+  deletedStarPresetTimestamps: {},
+  revokedStarTransactionIds: [],
+  revokedStarRedemptionIds: [],
+  revokedPraiseNoteIds: [],
+};
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+describe('VercelBlobSyncService proxy client', () => {
+  const originalFetch = globalThis.fetch;
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
   });
 
-  it('fetchLatestBlobMetadata queries vercel blob API and returns sorted list', async () => {
+  it('loads the latest 클라우드 동기화 스냅샷 from the proxy without a blob token', async () => {
+    const proxyPayload = {
+      latest: {
+        url: 'https://blob.test/state3',
+        pathname: 'families/family-main/state-00000003000-dev2.json',
+      },
+      snapshot: remoteSnapshot,
+      allBlobs: [
+        {
+          url: 'https://blob.test/state3',
+          pathname: 'families/family-main/state-00000003000-dev2.json',
+        },
+        {
+          url: 'https://blob.test/state1',
+          pathname: 'families/family-main/state-00000001000-dev1.json',
+        },
+      ],
+    };
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => proxyPayload,
+    });
+    globalThis.fetch = mockFetch;
+
+    const service = new VercelBlobSyncService();
+    const result = await service.fetchLatestSnapshot('family-main');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/sync/latest?familyCode=family-main');
+    expect(options.method).toBe('GET');
+    expect(options.headers?.Authorization).toBeUndefined();
+    expect(JSON.stringify(options.headers)).not.toContain('vercel_blob');
+    expect(result.latest?.pathname).toBe('families/family-main/state-00000003000-dev2.json');
+    expect(result.snapshot?.schemaVersion).toBe(5);
+    expect(result.snapshot?.parentPinCode).toBe('160125');
+    expect(result.allBlobs).toHaveLength(2);
+  });
+
+  it('prefixes proxy requests with VITE_SYNC_API_URL when a production origin is configured', async () => {
+    vi.stubEnv('VITE_SYNC_API_URL', 'https://sync.example.com/');
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ latest: null, snapshot: null, allBlobs: [] }),
+    });
+    globalThis.fetch = mockFetch;
+
+    const service = new VercelBlobSyncService();
+    await service.fetchLatestSnapshot('Kim Family!');
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url] = mockFetch.mock.calls[0];
+    expect(url).toBe('https://sync.example.com/api/sync/latest?familyCode=kimfamily');
+  });
+
+  it('returns an empty snapshot when the proxy has no stored blobs', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ latest: null, snapshot: null, allBlobs: [] }),
+    });
+
+    const service = new VercelBlobSyncService('');
+    const result = await service.fetchLatestSnapshot('family-main');
+
+    expect(result.latest).toBeNull();
+    expect(result.snapshot).toBeNull();
+    expect(result.allBlobs).toEqual([]);
+  });
+
+  it('surfaces the proxy error message when the latest snapshot request fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      json: async () => ({
+        error: '서버 환경 변수 BLOB_READ_WRITE_TOKEN이 설정되지 않아 클라우드 동기화를 처리할 수 없습니다.',
+      }),
+    });
+
+    const service = new VercelBlobSyncService('');
+    await expect(service.fetchLatestSnapshot('family-main')).rejects.toThrow(
+      '동기화 서버 응답 오류 (500): 서버 환경 변수 BLOB_READ_WRITE_TOKEN이 설정되지 않아 클라우드 동기화를 처리할 수 없습니다.'
+    );
+  });
+
+  it('uploads a 클라우드 동기화 스냅샷 through the proxy and leaves cleanup to the server', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({
-        blobs: [
-          { pathname: 'families/family-main/state-00000001000-dev1.json', url: 'https://blob.test/state1' },
-          { pathname: 'families/family-main/state-00000003000-dev2.json', url: 'https://blob.test/state3' },
-          { pathname: 'families/family-main/state-00000002000-dev1.json', url: 'https://blob.test/state2' },
-        ],
+        url: 'https://blob.test/new-state.json',
+        pathname: 'families/family-main/state-00001-web-1234.json',
       }),
     });
     globalThis.fetch = mockFetch;
 
-    const service = new VercelBlobSyncService();
-    const result = await service.fetchLatestBlobMetadata('token123', 'family-main');
-
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    const [url, options] = mockFetch.mock.calls[0];
-    expect(url).toContain('https://blob.vercel-storage.com?prefix=families%2Ffamily-main%2Fstate-&limit=100&_t=');
-    expect(options.headers['Authorization']).toBe('Bearer token123');
-    expect(options.headers['x-api-version']).toBe('7');
-    expect(options.headers['Cache-Control']).toBe('no-cache');
-
-    expect(result.latest?.pathname).toBe('families/family-main/state-00000003000-dev2.json');
-    expect(result.allBlobs).toHaveLength(3);
-    expect(result.allBlobs[0].pathname).toBe('families/family-main/state-00000003000-dev2.json');
-    expect(result.allBlobs[2].pathname).toBe('families/family-main/state-00000001000-dev1.json');
-  });
-
-  it('fetchLatestBlobMetadata handles empty blob list', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({ blobs: [] }),
-    });
-
-    const service = new VercelBlobSyncService();
-    const result = await service.fetchLatestBlobMetadata('token123', 'family-main');
-    expect(result.latest).toBeNull();
-    expect(result.allBlobs).toEqual([]);
-  });
-
-  it('throws when token is missing', async () => {
-    const service = new VercelBlobSyncService();
-    await expect(service.fetchLatestBlobMetadata('', 'family-main')).rejects.toThrow('토큰');
-  });
-
-  it('downloadSnapshot downloads and decodes JSON correctly', async () => {
-    const mockSnapshot: Partial<CloudSyncSnapshot> = {
-      schemaVersion: 5,
-      familyCode: 'family-main',
-      parentPinCode: '160125',
-      items: [],
-    };
-
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => mockSnapshot,
-    });
-
-    const service = new VercelBlobSyncService();
-    const result = await service.downloadSnapshot('https://blob.test/download.json', 'token123');
-
-    expect(globalThis.fetch).toHaveBeenCalledWith('https://blob.test/download.json', {
-      method: 'GET',
-      headers: {
-        Authorization: 'Bearer token123',
-        'Cache-Control': 'no-cache',
-      },
-    });
-    expect(result.schemaVersion).toBe(5);
-    expect(result.familyCode).toBe('family-main');
-  });
-
-  it('downloadSnapshot throws on HTTP error response', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 404,
-      text: async () => 'Not Found',
-      json: async () => ({ message: 'Blob not found' }),
-    });
-
-    const service = new VercelBlobSyncService();
-    await expect(service.downloadSnapshot('https://blob.test/download.json', 'token123')).rejects.toThrow('404');
-  });
-
-  it('uploadSnapshot uploads snapshot and cleans up previous blobs', async () => {
-    const mockSnapshot: CloudSyncSnapshot = {
-      schemaVersion: 5,
-      familyCode: 'family-main',
-      updatedAt: 1700000000,
-      updatedByRole: '웹',
-      updatedByDeviceId: 'web-1234',
-      parentPinCode: '160125',
-      parentPinUpdatedAt: 1700000000,
-      items: [],
-      deletedItemTimestamps: {},
-      weeklyOverrides: {},
-      completionFlags: {},
-      subTaskCompletionFlags: {},
-      parentVerifiedFlags: {},
-      parentVerifiedSubTaskFlags: {},
-      itemReactions: {},
-      praiseNotes: [],
-      rewardRedemptions: [],
-      archivedEarnedHearts: 0,
-      rewardPresets: [],
-      deletedRewardPresetTimestamps: {},
-      starTransactions: [],
-      starRedemptionRequests: [],
-      starRewardPresets: [],
-      deletedStarPresetTimestamps: {},
-      revokedStarTransactionIds: [],
-      revokedStarRedemptionIds: [],
-      revokedPraiseNoteIds: [],
-    };
-
-    const mockFetch = vi.fn().mockImplementation((_url: string, options: RequestInit) => {
-      if (options.method === 'PUT') {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: async () => ({
-            url: 'https://blob.test/new-state.json',
-            pathname: 'families/family-main/state-00001-web-1234.json',
-          }),
-        });
-      }
-      if (options.method === 'POST') {
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: async () => ({ deleted: true }),
-        });
-      }
-      return Promise.reject(new Error('Unexpected fetch call'));
-    });
-    globalThis.fetch = mockFetch;
-
-    const service = new VercelBlobSyncService();
-    const putRes = await service.uploadSnapshot(mockSnapshot, {
-      token: 'token123',
+    const service = new VercelBlobSyncService('https://sync.example.com');
+    const putRes = await service.uploadSnapshot(remoteSnapshot, {
       familyCode: 'family-main',
       shortDeviceId: 'web-1234',
       previousBlobsToDelete: [
@@ -165,60 +150,49 @@ describe('VercelBlobSyncService', () => {
       ],
     });
 
-    expect(putRes.url).toBe('https://blob.test/new-state.json');
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(putRes).toEqual({
+      url: 'https://blob.test/new-state.json',
+      pathname: 'families/family-main/state-00001-web-1234.json',
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
 
-    const [putUrl, putOpts] = mockFetch.mock.calls[0];
-    expect(putUrl).toContain('https://blob.vercel-storage.com/families/family-main/state-');
-    expect(putOpts.method).toBe('PUT');
-    expect(putOpts.headers['x-vercel-blob-access']).toBe('private');
-    expect(putOpts.headers['x-allow-overwrite']).toBe('1');
-    expect(JSON.parse(putOpts.body as string).schemaVersion).toBe(5);
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe('https://sync.example.com/api/sync/upload');
+    expect(options.method).toBe('POST');
+    expect(options.headers['Content-Type']).toBe('application/json');
+    expect(options.headers.Authorization).toBeUndefined();
+    expect(JSON.stringify(options)).not.toContain('vercel_blob');
+    expect(JSON.stringify(options)).not.toContain('blob.vercel-storage.com');
 
-    const [delUrl, delOpts] = mockFetch.mock.calls[1];
-    expect(delUrl).toBe('https://blob.vercel-storage.com/delete');
-    expect(delOpts.method).toBe('POST');
-    expect(JSON.parse(delOpts.body as string).urls).toEqual([
-      'https://blob.test/old1.json',
-      'https://blob.test/old2.json',
+    const body = JSON.parse(options.body as string);
+    expect(body.familyCode).toBe('family-main');
+    expect(body.shortDeviceId).toBe('web-1234');
+    expect(body.snapshot.schemaVersion).toBe(5);
+    expect(body.snapshot.parentPinCode).toBe('160125');
+    expect(body.previousBlobsToDelete).toEqual([
+      { url: 'https://blob.test/old1.json', pathname: 'old1.json' },
+      { url: 'https://blob.test/old2.json', pathname: 'old2.json' },
     ]);
   });
 
-  it('retries upload with access public if 400 error mentions public', async () => {
-    let putCount = 0;
-    const mockFetch = vi.fn().mockImplementation((_url: string, options: RequestInit) => {
-      if (options.method === 'PUT') {
-        putCount++;
-        if (putCount === 1) {
-          return Promise.resolve({
-            ok: false,
-            status: 400,
-            text: async () => 'Store only supports public access',
-            json: async () => ({ message: 'Store only supports public access' }),
-          });
-        }
-        return Promise.resolve({
-          ok: true,
-          status: 200,
-          json: async () => ({
-            url: 'https://blob.test/public-state.json',
-            pathname: 'families/family-main/state-public.json',
-          }),
-        });
-      }
-      return Promise.resolve({ ok: true, json: async () => ({}) });
-    });
-    globalThis.fetch = mockFetch;
-
-    const service = new VercelBlobSyncService();
-    const result = await service.uploadSnapshot({} as CloudSyncSnapshot, {
-      token: 'token123',
-      familyCode: 'family-main',
-      shortDeviceId: 'web-1234',
+  it('surfaces the proxy error message when the snapshot upload fails', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: 'Bad Request',
+      json: async () => ({
+        error: '유효한 familyCode 및 snapshot JSON 데이터가 필요합니다.',
+      }),
     });
 
-    expect(result.url).toBe('https://blob.test/public-state.json');
-    expect(putCount).toBe(2);
-    expect(mockFetch.mock.calls[1][1].headers['x-vercel-blob-access']).toBe('public');
+    const service = new VercelBlobSyncService('');
+    await expect(
+      service.uploadSnapshot(remoteSnapshot, {
+        familyCode: 'family-main',
+        shortDeviceId: 'web-1234',
+      })
+    ).rejects.toThrow(
+      '동기화 서버 응답 오류 (400): 유효한 familyCode 및 snapshot JSON 데이터가 필요합니다.'
+    );
   });
 });

@@ -62,15 +62,11 @@ export function useCloudSync({
       }
 
       try {
-        const token = store.getBlobToken();
         const familyCode = store.getFamilyCode();
         const deviceId = store.getDeviceId();
 
-        // 1. Fetch latest metadata
-        const { latest, allBlobs } = await syncService.fetchLatestBlobMetadata(
-          token,
-          familyCode
-        );
+        // 1. Fetch the latest 클라우드 동기화 스냅샷 from the proxy
+        const { latest, snapshot, allBlobs } = await syncService.fetchLatestSnapshot(familyCode);
 
         // If background polling and remote hasn't changed and local is clean, skip work
         if (
@@ -85,9 +81,9 @@ export function useCloudSync({
 
         let eventToastMessage: string | null = null;
 
-        // 2. Download and merge remote snapshot if there is a new remote snapshot
-        if (latest && latest.pathname !== lastSyncedBlobPathnameRef.current) {
-          const remote = await syncService.downloadSnapshot(latest.url, token);
+        // 2. Merge the proxy snapshot when a newer remote pathname arrives
+        if (latest && snapshot && latest.pathname !== lastSyncedBlobPathnameRef.current) {
+          const remote = snapshot;
 
           const localBefore = store.makeCurrentSnapshot();
           const prevPraiseCount = localBefore.praiseNotes.length;
@@ -130,7 +126,6 @@ export function useCloudSync({
         if (shouldUpload) {
           const currentSnapshot = store.makeCurrentSnapshot();
           const putResult = await syncService.uploadSnapshot(currentSnapshot, {
-            token,
             familyCode,
             shortDeviceId: deviceId,
             previousBlobsToDelete: allBlobs,

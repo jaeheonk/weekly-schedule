@@ -24,11 +24,11 @@ describe('useCloudSync Hook', () => {
     mockRemoteSnapshot.parentPinCode = '888888';
     mockRemoteSnapshot.parentPinUpdatedAt = Date.now() / 1000 + 50;
 
-    vi.spyOn(syncService, 'fetchLatestBlobMetadata').mockResolvedValue({
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
       latest: { url: 'https://blob.test/state1.json', pathname: 'families/family-main/state-1.json' },
+      snapshot: mockRemoteSnapshot,
       allBlobs: [],
     });
-    vi.spyOn(syncService, 'downloadSnapshot').mockResolvedValue(mockRemoteSnapshot);
     const uploadSpy = vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({
       url: 'https://blob.test/state2.json',
       pathname: 'families/family-main/state-2.json',
@@ -61,11 +61,11 @@ describe('useCloudSync Hook', () => {
       },
     ];
 
-    vi.spyOn(syncService, 'fetchLatestBlobMetadata').mockResolvedValue({
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
       latest: { url: 'https://blob.test/state-new.json', pathname: 'families/family-main/state-new.json' },
+      snapshot: mockRemoteSnapshot,
       allBlobs: [],
     });
-    vi.spyOn(syncService, 'downloadSnapshot').mockResolvedValue(mockRemoteSnapshot);
     vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({
       url: 'https://blob.test/state-put.json',
       pathname: 'families/family-main/state-put.json',
@@ -84,7 +84,7 @@ describe('useCloudSync Hook', () => {
   });
 
   it('handles sync error gracefully and displays error toast', async () => {
-    vi.spyOn(syncService, 'fetchLatestBlobMetadata').mockRejectedValue(
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockRejectedValue(
       new Error('네트워크 연결 끊김')
     );
 
@@ -117,8 +117,9 @@ describe('useCloudSync Hook', () => {
   });
 
   it('triggers sync on visibility change when returning to tab', async () => {
-    const fetchSpy = vi.spyOn(syncService, 'fetchLatestBlobMetadata').mockResolvedValue({
+    const fetchSpy = vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
       latest: null,
+      snapshot: null,
       allBlobs: [],
     });
     vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({

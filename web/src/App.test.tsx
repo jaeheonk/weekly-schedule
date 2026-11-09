@@ -10,8 +10,9 @@ describe('App & Hash Navigation (Seam 2)', () => {
     localStorage.clear();
     sessionStorage.clear();
     globalScheduleStore.reloadFromStorage();
-    vi.spyOn(VercelBlobSyncService.prototype, 'fetchLatestBlobMetadata').mockResolvedValue({
+    vi.spyOn(VercelBlobSyncService.prototype, 'fetchLatestSnapshot').mockResolvedValue({
       latest: null,
+      snapshot: null,
       allBlobs: [],
     });
     vi.spyOn(VercelBlobSyncService.prototype, 'uploadSnapshot').mockResolvedValue({

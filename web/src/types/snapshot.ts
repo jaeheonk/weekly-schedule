@@ -7,11 +7,6 @@ export interface VercelBlobItem {
   uploadedAt?: string;
 }
 
-export interface VercelBlobListResponse {
-  hasMore?: boolean;
-  blobs: VercelBlobItem[];
-}
-
 export interface VercelBlobPutResponse {
   url: string;
   pathname: string;

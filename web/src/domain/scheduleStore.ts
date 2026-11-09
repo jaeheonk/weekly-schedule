@@ -28,7 +28,7 @@ import {
 import { getWeekdayNumber, getWeekKey, compareScheduleItemsByTime, formatTime } from './calendarUtils';
 import { getMasterScheduleItems } from './defaultSchedule';
 import { mergeSnapshots } from './snapshotMerge';
-import { DEFAULT_VERCEL_BLOB_TOKEN, DEFAULT_FAMILY_CODE } from '../services/vercelBlobSync';
+import { DEFAULT_FAMILY_CODE } from '../services/vercelBlobSync';
 
 export const currentEpochSeconds = (): number => Date.now() / 1000;
 
@@ -92,7 +92,6 @@ export class ScheduleStore {
 
   // CloudSyncSnapshot fields
   private familyCode: string = DEFAULT_FAMILY_CODE;
-  private blobToken: string = DEFAULT_VERCEL_BLOB_TOKEN;
   private deviceId: string = '';
   private parentPinCode: string = '160125';
   private parentPinUpdatedAt: number = 1700000000;
@@ -165,8 +164,8 @@ export class ScheduleStore {
     try {
       const storedFamilyCode = localStorage.getItem(STORAGE_KEYS.FAMILY_CODE);
       if (storedFamilyCode) this.familyCode = storedFamilyCode;
-      const storedBlobToken = localStorage.getItem(STORAGE_KEYS.BLOB_TOKEN);
-      if (storedBlobToken) this.blobToken = storedBlobToken;
+      // Older builds stored the Blob credential in the browser. The proxy holds it now.
+      localStorage.removeItem(STORAGE_KEYS.BLOB_TOKEN);
       const storedPin = localStorage.getItem(STORAGE_KEYS.PARENT_PIN);
       if (storedPin) this.parentPinCode = storedPin;
       const storedPinTimestamp = localStorage.getItem(STORAGE_KEYS.PARENT_PIN_UPDATED_AT);
@@ -184,20 +183,6 @@ export class ScheduleStore {
     this.familyCode = code || DEFAULT_FAMILY_CODE;
     try {
       localStorage.setItem(STORAGE_KEYS.FAMILY_CODE, this.familyCode);
-    } catch {
-      // ignore
-    }
-    this.notify();
-  }
-
-  public getBlobToken(): string {
-    return this.blobToken;
-  }
-
-  public setBlobToken(token: string): void {
-    this.blobToken = token || DEFAULT_VERCEL_BLOB_TOKEN;
-    try {
-      localStorage.setItem(STORAGE_KEYS.BLOB_TOKEN, this.blobToken);
     } catch {
       // ignore
     }
