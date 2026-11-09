@@ -1,0 +1,25 @@
+{
+  "name": "주간 시간표 (Weekly Schedule)",
+  "short_name": "주간시간표",
+  "description": "아이와 부모가 함께 사용하는 주간 시간표 및 자기주도 습관·동기부여 관리 시스템",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F8FAFC",
+  "theme_color": "#3B82F6",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

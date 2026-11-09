@@ -28,3 +28,8 @@ dist/
 .env
 .env.*
 *.xcconfig.local
+
+# Web / Node
+node_modules/
+web/node_modules/
+web/dist/
