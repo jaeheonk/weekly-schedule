@@ -1089,3 +1089,204 @@ struct CloudSyncSnapshot: Codable, Equatable {
         revokedPraiseNoteIds = try container.decodeIfPresent([String].self, forKey: .revokedPraiseNoteIds) ?? []
     }
 }
+
+// MARK: - 인쇄 전용 도메인 헬퍼 (Web printLayout.ts와 1:1 패리티)
+enum SchedulePrintHelper {
+    struct PrintableTimeSlot: Identifiable, Hashable {
+        let hour: Int
+        let minute: Int
+        var id: Int { hour * 60 + minute }
+        var totalMinutes: Int { hour * 60 + minute }
+
+        var label: String {
+            ScheduleItem.formatCompactTime(hour: hour, minute: minute)
+        }
+    }
+
+    struct DayCellBlock: Identifiable {
+        let id: String
+        let startSlotIndex: Int
+        let spanCount: Int
+        let slot: PrintableTimeSlot
+        let nextSlotMinutes: Int
+        let items: [ScheduleItem]
+        let isHighlightedSpanBlock: Bool
+    }
+
+    static let baseTimeSlots: [(Int, Int)] = [
+        (7, 0),
+        (9, 30),
+        (10, 30),
+        (12, 0),
+        (13, 30),
+        (14, 30),
+        (15, 0),
+        (16, 0),
+        (17, 0),
+        (18, 0),
+        (19, 0),
+        (20, 0),
+        (21, 30),
+        (22, 30)
+    ]
+
+    static func generateTimeSlots(for items: [ScheduleItem]) -> [PrintableTimeSlot] {
+        var set = Set<PrintableTimeSlot>(baseTimeSlots.map { PrintableTimeSlot(hour: $0.0, minute: $0.1) })
+        for item in items {
+            set.insert(PrintableTimeSlot(hour: item.startHour, minute: item.startMinute))
+        }
+        return set.sorted { $0.totalMinutes < $1.totalMinutes }
+    }
+
+    static func activeItems(for weekday: Weekday, items: [ScheduleItem], slot: PrintableTimeSlot, nextSlotMinutes: Int) -> [ScheduleItem] {
+        let dayItems = items
+            .filter { $0.weekday == weekday }
+            .sorted {
+                if $0.startTotalMinutes == $1.startTotalMinutes {
+                    return $0.endTotalMinutes < $1.endTotalMinutes
+                }
+                return $0.startTotalMinutes < $1.startTotalMinutes
+            }
+        return dayItems.filter { item in
+            let startsInSlot = item.startTotalMinutes >= slot.totalMinutes && item.startTotalMinutes < nextSlotMinutes
+            let spansAcrossSlot = item.startTotalMinutes < slot.totalMinutes && item.endTotalMinutes > slot.totalMinutes
+            return startsInSlot || spansAcrossSlot
+        }
+    }
+
+    /// 요일별 세로 컬럼 블록 계산 (2개 이상의 슬롯에 걸친 일정은 단일 확장 셀로 통합)
+    static func buildColumnBlocks(
+        for weekday: Weekday,
+        items: [ScheduleItem],
+        slots: [PrintableTimeSlot],
+        mergeLongBlocks: Bool
+    ) -> [DayCellBlock] {
+        var blocks: [DayCellBlock] = []
+        var idx = 0
+
+        while idx < slots.count {
+            let slot = slots[idx]
+            let nextMinutes = (idx + 1 < slots.count) ? slots[idx + 1].totalMinutes : 24 * 60
+            let currentItems = activeItems(for: weekday, items: items, slot: slot, nextSlotMinutes: nextMinutes)
+
+            if currentItems.count == 1, let singleItem = currentItems.first {
+                // 이 아이템이 단독으로 이어지는 연속 슬롯 개수 계산
+                var span = 1
+                while (idx + span) < slots.count {
+                    let nextSlot = slots[idx + span]
+                    let afterNextMinutes = (idx + span + 1 < slots.count) ? slots[idx + span + 1].totalMinutes : 24 * 60
+                    let nextActive = activeItems(for: weekday, items: items, slot: nextSlot, nextSlotMinutes: afterNextMinutes)
+                    if nextActive.count == 1 && nextActive.first?.id == singleItem.id {
+                        span += 1
+                    } else {
+                        break
+                    }
+                }
+
+                if shouldMergeAcrossSlots(item: singleItem, spannedSlotCount: span, mergeLongBlocks: mergeLongBlocks) {
+                    let finalNextMinutes = (idx + span < slots.count) ? slots[idx + span].totalMinutes : 24 * 60
+                    blocks.append(
+                        DayCellBlock(
+                            id: "\(weekday.rawValue)_\(idx)_span\(span)",
+                            startSlotIndex: idx,
+                            spanCount: span,
+                            slot: slot,
+                            nextSlotMinutes: finalNextMinutes,
+                            items: [singleItem],
+                            isHighlightedSpanBlock: true
+                        )
+                    )
+                    idx += span
+                    continue
+                }
+            }
+
+            blocks.append(
+                DayCellBlock(
+                    id: "\(weekday.rawValue)_\(idx)",
+                    startSlotIndex: idx,
+                    spanCount: 1,
+                    slot: slot,
+                    nextSlotMinutes: nextMinutes,
+                    items: currentItems,
+                    isHighlightedSpanBlock: false
+                )
+            )
+            idx += 1
+        }
+
+        return blocks
+    }
+
+    /// 2개 이상의 시간 슬롯에 걸친 일정이 단일 확장 셀로 병합될 대상인지 판별
+    static func shouldMergeAcrossSlots(item: ScheduleItem, spannedSlotCount: Int, mergeLongBlocks: Bool) -> Bool {
+        guard mergeLongBlocks, spannedSlotCount >= 2 else { return false }
+        return true
+    }
+
+    /// 동일한 요일의 두 일정이 간격 0분, 제목(공백 제외), 카테고리가 일치하여 가상 병합 가능한지 검사
+    static func canMergeContiguous(prev: ScheduleItem, next: ScheduleItem) -> Bool {
+        guard prev.weekday == next.weekday else { return false }
+        let isContiguous = prev.endTotalMinutes == next.startTotalMinutes
+        let isSameTitle = prev.title.trimmingCharacters(in: .whitespacesAndNewlines) == next.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isSameCategory = prev.category == next.category
+        return isContiguous && isSameTitle && isSameCategory
+    }
+
+    private static func normalizeMergedItem(_ item: ScheduleItem) -> ScheduleItem {
+        var copy = item
+        copy.title = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return copy
+    }
+
+    /// 동일 요일 내에서 0분 간격으로 이어지는 동일 제목/카테고리의 일정을 단일 가상 ScheduleItem으로 결합
+    static func mergeContiguousItems(_ items: [ScheduleItem]) -> [ScheduleItem] {
+        guard items.count > 1 else { return items }
+
+        // 요일별 그룹화
+        var byWeekday: [Weekday: [ScheduleItem]] = [:]
+        for item in items {
+            byWeekday[item.weekday, default: []].append(item)
+        }
+
+        var result: [ScheduleItem] = []
+        let sortedWeekdays = Weekday.allCases.filter { byWeekday[$0] != nil }
+
+        for weekday in sortedWeekdays {
+            guard let dayItems = byWeekday[weekday], !dayItems.isEmpty else { continue }
+            // 시간순 정렬 (시작 시각, 종료 시각)
+            let sorted = dayItems.sorted {
+                if $0.startTotalMinutes == $1.startTotalMinutes {
+                    return $0.endTotalMinutes < $1.endTotalMinutes
+                }
+                return $0.startTotalMinutes < $1.startTotalMinutes
+            }
+
+            var current = normalizeMergedItem(sorted[0])
+
+            for i in 1..<sorted.count {
+                let next = sorted[i]
+
+                if canMergeContiguous(prev: current, next: next) {
+                    // next를 current에 병합
+                    let notes = [current.note, next.note]
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .filter { !$0.isEmpty }
+
+                    current.endHour = next.endHour
+                    current.endMinute = next.endMinute
+                    current.note = notes.joined(separator: "\n")
+                    current.subTasks += next.subTasks
+                    current.updatedAt = max(current.updatedAt, next.updatedAt)
+                } else {
+                    result.append(current)
+                    current = normalizeMergedItem(next)
+                }
+            }
+
+            result.append(current)
+        }
+
+        return result
+    }
+}

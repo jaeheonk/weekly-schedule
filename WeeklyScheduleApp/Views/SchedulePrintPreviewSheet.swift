@@ -49,7 +49,8 @@ struct SchedulePrintPreviewSheet: View {
     static let a4LandscapeSize = CGSize(width: 842, height: 595)
 
     private var printableItems: [ScheduleItem] {
-        printScope == .master ? store.masterItems : store.effectiveItems
+        let baseItems = printScope == .master ? store.masterItems : store.effectiveItems
+        return SchedulePrintHelper.mergeContiguousItems(baseItems)
     }
 
     var body: some View {
@@ -518,141 +519,22 @@ struct OnePagePrintableScheduleView: View {
     let heartCount: (ScheduleItem) -> Int
     let totalHeartsThisWeek: Int
 
-    struct PrintableTimeSlot: Identifiable, Hashable {
-        let hour: Int
-        let minute: Int
-        var id: Int { hour * 60 + minute }
-        var totalMinutes: Int { hour * 60 + minute }
-
-        var label: String {
-            ScheduleItem.formatCompactTime(hour: hour, minute: minute)
-        }
-    }
-
-    struct DayCellBlock: Identifiable {
-        let id: String
-        let startSlotIndex: Int
-        let spanCount: Int
-        let slot: PrintableTimeSlot
-        let nextSlotMinutes: Int
-        let items: [ScheduleItem]
-        let isHighlightedSpanBlock: Bool
-    }
+    typealias PrintableTimeSlot = SchedulePrintHelper.PrintableTimeSlot
+    typealias DayCellBlock = SchedulePrintHelper.DayCellBlock
 
     /// 기본 14개 시간 슬롯 + 사용자가 추가한 커스텀 시간대 자동 병합
     private var timeSlots: [PrintableTimeSlot] {
-        let baseSlots: [(Int, Int)] = [
-            (7, 0),
-            (9, 30),
-            (10, 30),
-            (12, 0),
-            (13, 30),
-            (14, 30),
-            (15, 0),
-            (16, 0),
-            (17, 0),
-            (18, 0),
-            (19, 0),
-            (20, 0),
-            (21, 30),
-            (22, 30)
-        ]
-        var set = Set<PrintableTimeSlot>(baseSlots.map { PrintableTimeSlot(hour: $0.0, minute: $0.1) })
-        for item in items {
-            set.insert(PrintableTimeSlot(hour: item.startHour, minute: item.startMinute))
-        }
-        return set.sorted { $0.totalMinutes < $1.totalMinutes }
-    }
-
-    private func items(for weekday: Weekday) -> [ScheduleItem] {
-        items
-            .filter { $0.weekday == weekday }
-            .sorted {
-                if $0.startTotalMinutes == $1.startTotalMinutes {
-                    return $0.endTotalMinutes < $1.endTotalMinutes
-                }
-                return $0.startTotalMinutes < $1.startTotalMinutes
-            }
-    }
-
-    private func activeItems(for weekday: Weekday, slot: PrintableTimeSlot, nextSlotMinutes: Int) -> [ScheduleItem] {
-        let dayItems = items(for: weekday)
-        return dayItems.filter { item in
-            let startsInSlot = item.startTotalMinutes >= slot.totalMinutes && item.startTotalMinutes < nextSlotMinutes
-            let spansAcrossSlot = item.startTotalMinutes < slot.totalMinutes && item.endTotalMinutes > slot.totalMinutes
-            return startsInSlot || spansAcrossSlot
-        }
-    }
-
-    /// 특정 아이템이 여러 행을 하나로 병합할 대상인지 판별 (예: 토요일 12:00~22:30 주간미션, 일요일 20:00~22:00 자유시간, 혹은 3슬롯 이상 장기 일정)
-    private func shouldMergeAcrossSlots(_ item: ScheduleItem, spannedSlotCount: Int) -> Bool {
-        guard mergeLongBlocks, spannedSlotCount >= 2 else { return false }
-        if spannedSlotCount >= 3 { return true }
-        if item.category == .free { return true }
-        if item.subTasks.count >= 3 { return true }
-        if item.durationMinutes >= 120 && (item.weekday == .saturday || item.weekday == .sunday) {
-            return true
-        }
-        return false
+        SchedulePrintHelper.generateTimeSlots(for: items)
     }
 
     /// 요일별 세로 컬럼 블록 계산 (병합된 셀은 spanCount만큼의 높이를 차지하여 표 테두리가 끊기지 않음)
     private func buildColumnBlocks(for weekday: Weekday, slots: [PrintableTimeSlot]) -> [DayCellBlock] {
-        var blocks: [DayCellBlock] = []
-        var idx = 0
-
-        while idx < slots.count {
-            let slot = slots[idx]
-            let nextMinutes = (idx + 1 < slots.count) ? slots[idx + 1].totalMinutes : 24 * 60
-            let currentItems = activeItems(for: weekday, slot: slot, nextSlotMinutes: nextMinutes)
-
-            if currentItems.count == 1, let singleItem = currentItems.first {
-                // 이 아이템이 단독으로 이어지는 연속 슬롯 개수 계산
-                var span = 1
-                while (idx + span) < slots.count {
-                    let nextSlot = slots[idx + span]
-                    let afterNextMinutes = (idx + span + 1 < slots.count) ? slots[idx + span + 1].totalMinutes : 24 * 60
-                    let nextActive = activeItems(for: weekday, slot: nextSlot, nextSlotMinutes: afterNextMinutes)
-                    if nextActive.count == 1 && nextActive.first?.id == singleItem.id {
-                        span += 1
-                    } else {
-                        break
-                    }
-                }
-
-                if shouldMergeAcrossSlots(singleItem, spannedSlotCount: span) {
-                    let finalNextMinutes = (idx + span < slots.count) ? slots[idx + span].totalMinutes : 24 * 60
-                    blocks.append(
-                        DayCellBlock(
-                            id: "\(weekday.rawValue)_\(idx)_span\(span)",
-                            startSlotIndex: idx,
-                            spanCount: span,
-                            slot: slot,
-                            nextSlotMinutes: finalNextMinutes,
-                            items: [singleItem],
-                            isHighlightedSpanBlock: true
-                        )
-                    )
-                    idx += span
-                    continue
-                }
-            }
-
-            blocks.append(
-                DayCellBlock(
-                    id: "\(weekday.rawValue)_\(idx)",
-                    startSlotIndex: idx,
-                    spanCount: 1,
-                    slot: slot,
-                    nextSlotMinutes: nextMinutes,
-                    items: currentItems,
-                    isHighlightedSpanBlock: false
-                )
-            )
-            idx += 1
-        }
-
-        return blocks
+        SchedulePrintHelper.buildColumnBlocks(
+            for: weekday,
+            items: items,
+            slots: slots,
+            mergeLongBlocks: mergeLongBlocks
+        )
     }
 
     // MARK: - 테마별 색상 팔레트
