@@ -4,9 +4,10 @@ import { TodayScheduleView } from './components/TodayScheduleView';
 import { WeeklyGridView } from './components/WeeklyGridView';
 import { StarRewardShopView } from './components/StarRewardShopView';
 import { StarCelebrationModal } from './components/StarCelebrationModal';
-import { SyncToast } from './components/SyncToast';
+import { SyncToast, SyncStatus } from './components/SyncToast';
 import { ParentPinModal } from './components/ParentPinModal';
 import { PraiseHeartModal } from './components/PraiseHeartModal';
+import { RewardExchangeModal } from './components/RewardExchangeModal';
 import { ScheduleEditModal } from './components/ScheduleEditModal';
 import { SchedulePrintModal } from './components/SchedulePrintModal';
 import { useCloudSync } from './hooks/useCloudSync';
@@ -50,6 +51,10 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
 
   const [pendingAwardDay, setPendingAwardDay] = useState<WeekdayNumber | null>(null);
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [isRewardModalOpen, setIsRewardModalOpen] = useState(false);
+  const [localToast, setLocalToast] = useState<{ message: string; status: SyncStatus } | null>(
+    null
+  );
   const [praiseModal, setPraiseModal] = useState<{
     isOpen: boolean;
     targetItem: ScheduleItem | null;
@@ -127,6 +132,20 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
     return unsubscribe;
   }, []);
 
+  useEffect(() => {
+    return globalScheduleStore.onToast((msg, status) => {
+      setLocalToast({ message: msg, status });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!localToast) return;
+    const timer = setTimeout(() => {
+      setLocalToast(null);
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [localToast]);
+
   const handleSelectTab = (tab: 'today' | 'weekly' | 'stars') => {
     window.location.hash = `#${tab}`;
     setActiveTab(tab);
@@ -140,9 +159,12 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col text-slate-800">
       <SyncToast
-        status={syncStatus}
-        message={toastMessage}
-        onClose={clearToast}
+        status={localToast ? localToast.status : syncStatus}
+        message={localToast ? localToast.message : toastMessage}
+        onClose={() => {
+          if (localToast) setLocalToast(null);
+          clearToast();
+        }}
       />
 
       <Navigation
@@ -155,6 +177,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
         isParentMode={isParentMode}
         onOpenParentPin={() => setIsPinModalOpen(true)}
         onLockParentMode={() => globalScheduleStore.lockParentMode()}
+        onOpenRewardExchange={() => setIsRewardModalOpen(true)}
         availableHearts={availableHearts}
         availableStars={availableStars}
         pendingStarRedemptions={pendingStarRedemptions}
@@ -250,6 +273,13 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
       <SchedulePrintModal
         isOpen={isPrintModalOpen}
         onClose={handleClosePrint}
+        store={globalScheduleStore}
+      />
+
+      {/* Heart Reward Exchange Modal */}
+      <RewardExchangeModal
+        isOpen={isRewardModalOpen}
+        onClose={() => setIsRewardModalOpen(false)}
         store={globalScheduleStore}
       />
     </div>

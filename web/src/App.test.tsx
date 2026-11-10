@@ -370,5 +370,48 @@ describe('App & Hash Navigation (Seam 2)', () => {
         expect(screen.getByRole('dialog')).toBeInTheDocument();
       });
     });
+
+    describe('Heart Reward Exchange Integration (Seam 3 / Issue 01)', () => {
+      it('opens reward exchange modal on clicking header heart badge and completes exchange end-to-end', async () => {
+        globalScheduleStore.setCurrentDate(new Date(2026, 10, 9));
+        globalScheduleStore.sendFamilyPraise({
+          hearts: 20,
+          sticker: 'heart',
+          message: '수고했어!',
+        });
+
+        render(<App syncOnMount={false} />);
+
+        const heartBadge = screen.getByTestId('header-hearts-badge');
+        expect(heartBadge).toHaveTextContent('20');
+
+        // Click header badge to open modal
+        fireEvent.click(heartBadge);
+
+        expect(screen.getByTestId('reward-exchange-modal')).toBeInTheDocument();
+        expect(screen.getByTestId('available-hearts-value')).toHaveTextContent('20');
+
+        // Select preset #1 (자유 놀이 / 게임 30분, 10개)
+        const presetCard = screen.getByTestId('preset-card-00000000-0000-0000-0000-000000000101');
+        fireEvent.click(presetCard);
+
+        // Click redeem submit button
+        const submitBtn = screen.getByTestId('redeem-submit-btn');
+        fireEvent.click(submitBtn);
+
+        // Modal should close
+        await waitFor(() => {
+          expect(screen.queryByTestId('reward-exchange-modal')).not.toBeInTheDocument();
+        });
+
+        // Header badge should now display 10 hearts
+        expect(screen.getByTestId('header-hearts-badge')).toHaveTextContent('10');
+
+        // Toast message confirming completion should appear
+        const toast = await screen.findByTestId('sync-toast');
+        expect(toast).toHaveTextContent('자유 놀이 / 게임 30분');
+        expect(toast).toHaveTextContent('하트 10개가 차감되었어요');
+      });
+    });
   });
 });

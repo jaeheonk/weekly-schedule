@@ -823,4 +823,139 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(store.getTotalSpentStars()).toBe(1);
     });
   });
+
+  describe('Heart Reward System (Seam 1 / Issue 01)', () => {
+    it('initializes with 8 default reward presets matching native iOS definitions', () => {
+      const store = new ScheduleStore();
+      const presets = store.getRewardPresets();
+      expect(presets).toHaveLength(8);
+      expect(presets[0]).toMatchObject({
+        id: '00000000-0000-0000-0000-000000000101',
+        emoji: '🎮',
+        title: '자유 놀이 / 게임 30분',
+        hearts: 10,
+        tag: '놀이',
+      });
+      expect(presets[1]).toMatchObject({
+        id: '00000000-0000-0000-0000-000000000102',
+        emoji: '🍦',
+        title: '달콤한 간식 / 아이스크림',
+        hearts: 5,
+        tag: '간식',
+      });
+      expect(presets[7]).toMatchObject({
+        id: '00000000-0000-0000-0000-000000000108',
+        emoji: '🍳',
+        title: '오늘 저녁 메뉴 고르기',
+        hearts: 10,
+        tag: '특별',
+      });
+    });
+
+    it('computes totalEarnedHearts, totalSpentHearts, and availableHearts accurately', () => {
+      const store = new ScheduleStore();
+      expect(store.getTotalEarnedHearts()).toBe(0);
+      expect(store.getTotalSpentHearts()).toBe(0);
+      expect(store.getAvailableHearts()).toBe(0);
+
+      // Add praise note with 15 hearts
+      store.sendFamilyPraise({
+        hearts: 15,
+        sticker: 'heart',
+        message: '멋진 하루야!',
+      });
+      expect(store.getTotalEarnedHearts()).toBe(15);
+      expect(store.getAvailableHearts()).toBe(15);
+      expect(store.getTotalSpentHearts()).toBe(0);
+    });
+
+    it('executes heart reward redemption, updates ledger, emits toast, and notifies subscribers', () => {
+      const store = new ScheduleStore();
+      store.sendFamilyPraise({
+        hearts: 25,
+        sticker: 'heart',
+        message: '칭찬 하트 25개',
+      });
+
+      let notified = false;
+      store.subscribe(() => {
+        notified = true;
+      });
+
+      let toastEmitted: { message: string; status: string } | null = null;
+      store.onToast((message, status) => {
+        toastEmitted = { message, status };
+      });
+
+      const success = store.redeemReward('자유 놀이 / 게임 30분', 10);
+      expect(success).toBe(true);
+      expect(notified).toBe(true);
+      expect(store.getAvailableHearts()).toBe(15);
+      expect(store.getTotalSpentHearts()).toBe(10);
+
+      const redemptions = store.getRewardRedemptions();
+      expect(redemptions).toHaveLength(1);
+      expect(redemptions[0].title).toBe('자유 놀이 / 게임 30분');
+      expect(redemptions[0].hearts).toBe(10);
+      expect(redemptions[0].redeemedByRole).toBe('아이');
+
+      expect(toastEmitted).toEqual({
+        message: '🎁 [자유 놀이 / 게임 30분] 교환 완료! 하트 10개가 차감되었어요.',
+        status: 'success',
+      });
+    });
+
+    it('falls back to default title "보상 교환" when whitespace or empty title is passed', () => {
+      const store = new ScheduleStore();
+      store.sendFamilyPraise({
+        hearts: 10,
+        sticker: 'heart',
+        message: '칭찬 하트',
+      });
+
+      expect(store.redeemReward('   ', 5)).toBe(true);
+      const redemptions = store.getRewardRedemptions();
+      expect(redemptions[0].title).toBe('보상 교환');
+    });
+
+    it('rejects redemption if requested hearts exceed available balance or is non-positive', () => {
+      const store = new ScheduleStore();
+      store.sendFamilyPraise({
+        hearts: 10,
+        sticker: 'heart',
+        message: '칭찬 하트',
+      });
+
+      // Overdraft
+      expect(store.redeemReward('장난감 선물', 15)).toBe(false);
+      expect(store.getAvailableHearts()).toBe(10);
+      expect(store.getRewardRedemptions()).toHaveLength(0);
+
+      // Non-positive
+      expect(store.redeemReward('간식', 0)).toBe(false);
+      expect(store.redeemReward('간식', -5)).toBe(false);
+      expect(store.getAvailableHearts()).toBe(10);
+    });
+
+    it('caps redemption history to a 50-item ring buffer', () => {
+      const store = new ScheduleStore();
+      store.sendFamilyPraise({
+        hearts: 100,
+        sticker: 'heart',
+        message: '충분한 하트',
+      });
+
+      for (let i = 1; i <= 55; i++) {
+        store.redeemReward(`보상 #${i}`, 1);
+      }
+
+      const redemptions = store.getRewardRedemptions();
+      expect(redemptions).toHaveLength(50);
+      // Newest should be #55, oldest in ring buffer should be #6
+      expect(redemptions[0].title).toBe('보상 #55');
+      expect(redemptions[49].title).toBe('보상 #6');
+      expect(store.getTotalSpentHearts()).toBe(50);
+      expect(store.getAvailableHearts()).toBe(50);
+    });
+  });
 });

@@ -93,6 +93,73 @@ export interface RewardPreset {
   updatedAt: number;
 }
 
+export const DEFAULT_REWARD_PRESETS: RewardPreset[] = [
+  {
+    id: '00000000-0000-0000-0000-000000000101',
+    emoji: '🎮',
+    title: '자유 놀이 / 게임 30분',
+    hearts: 10,
+    tag: '놀이',
+    updatedAt: 1700000000,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000102',
+    emoji: '🍦',
+    title: '달콤한 간식 / 아이스크림',
+    hearts: 5,
+    tag: '간식',
+    updatedAt: 1700000000,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000103',
+    emoji: '🧸',
+    title: '문구 / 장난감 선물',
+    hearts: 20,
+    tag: '선물',
+    updatedAt: 1700000000,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000104',
+    emoji: '🎡',
+    title: '주말 특별 가족 나들이',
+    hearts: 30,
+    tag: '나들이',
+    updatedAt: 1700000000,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000105',
+    emoji: '💰',
+    title: '용돈 2,000원 교환',
+    hearts: 10,
+    tag: '용돈',
+    updatedAt: 1700000000,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000106',
+    emoji: '🎬',
+    title: '영화 / 만화 시청 1편',
+    hearts: 15,
+    tag: '미디어',
+    updatedAt: 1700000000,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000107',
+    emoji: '🛌',
+    title: '30분 늦게 자기 쿠폰',
+    hearts: 15,
+    tag: '쿠폰',
+    updatedAt: 1700000000,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000108',
+    emoji: '🍳',
+    title: '오늘 저녁 메뉴 고르기',
+    hearts: 10,
+    tag: '특별',
+    updatedAt: 1700000000,
+  },
+];
+
 export type StarTransactionKind = 'dailyAllClear' | 'weeklyAllClearBonus' | 'rewardRedemption';
 
 export interface StarTransaction {

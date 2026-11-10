@@ -24,6 +24,7 @@ import {
   WeekdayStarState,
   StarCelebrationContext,
   DEFAULT_STAR_PRESETS,
+  DEFAULT_REWARD_PRESETS,
 } from '../types/snapshot';
 import { getWeekdayNumber, getWeekKey, compareScheduleItemsByTime, formatTime } from './calendarUtils';
 import { getMasterScheduleItems } from './defaultSchedule';
@@ -78,6 +79,9 @@ export class ScheduleStore {
   private items: ScheduleItem[] = [];
   private currentDate: Date;
   private listeners: Set<StoreListener> = new Set();
+  private toastListeners: Set<
+    (message: string, status: 'idle' | 'syncing' | 'success' | 'error') => void
+  > = new Set();
 
   private completedItemKeys: Set<string> = new Set();
   private completedSubTaskKeys: Set<string> = new Set();
@@ -106,7 +110,7 @@ export class ScheduleStore {
   private praiseNotes: ParentPraiseNote[] = [];
   private rewardRedemptions: HeartRewardRedemption[] = [];
   private archivedEarnedHearts: number = 0;
-  private rewardPresets: RewardPreset[] = [];
+  private rewardPresets: RewardPreset[] = [...DEFAULT_REWARD_PRESETS];
   private deletedRewardPresetTimestamps: Record<string, number> = {};
   private starTransactions: StarTransaction[] = [];
   private starRedemptionRequests: StarRedemptionRequest[] = [];
@@ -133,6 +137,24 @@ export class ScheduleStore {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  public onToast(
+    listener: (message: string, status: 'idle' | 'syncing' | 'success' | 'error') => void
+  ): () => void {
+    this.toastListeners.add(listener);
+    return () => {
+      this.toastListeners.delete(listener);
+    };
+  }
+
+  public emitToast(
+    message: string,
+    status: 'idle' | 'syncing' | 'success' | 'error' = 'success'
+  ): void {
+    for (const listener of this.toastListeners) {
+      listener(message, status);
+    }
   }
 
   private notify(): void {
@@ -557,6 +579,23 @@ export class ScheduleStore {
   }
 
   private loadSnapshotMeta(): void {
+    this.deletedItemTimestamps = {};
+    this.weeklyOverrides = {};
+    this.itemReactions = {};
+    this.praiseNotes = [];
+    this.rewardRedemptions = [];
+    this.archivedEarnedHearts = 0;
+    this.rewardPresets = [...DEFAULT_REWARD_PRESETS];
+    this.deletedRewardPresetTimestamps = {};
+    this.starTransactions = [];
+    this.starRedemptionRequests = [];
+    this.starRewardPresets = [...DEFAULT_STAR_PRESETS];
+    this.deletedStarPresetTimestamps = {};
+    this.revokedStarTransactionIds = [];
+    this.revokedStarRedemptionIds = [];
+    this.revokedPraiseNoteIds = [];
+    this.celebrationContext = null;
+
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.SNAPSHOT_STATE);
       if (stored) {
@@ -588,6 +627,9 @@ export class ScheduleStore {
     }
     if (!this.starRewardPresets || this.starRewardPresets.length === 0) {
       this.starRewardPresets = [...DEFAULT_STAR_PRESETS];
+    }
+    if (!this.rewardPresets || this.rewardPresets.length === 0) {
+      this.rewardPresets = [...DEFAULT_REWARD_PRESETS];
     }
   }
 
@@ -1039,15 +1081,59 @@ export class ScheduleStore {
     return [...this.praiseNotes].sort((a, b) => b.createdAt - a.createdAt)[0];
   }
 
-  public getAvailableHearts(): number {
+  public getTotalEarnedHearts(): number {
     const itemHeartSum = Object.values(this.itemReactions).reduce(
       (acc, r) => acc + (r.heartCount || 0),
       0
     );
     const noteHeartSum = this.praiseNotes.reduce((acc, n) => acc + (n.hearts || 0), 0);
-    const totalEarned = itemHeartSum + noteHeartSum + this.archivedEarnedHearts;
-    const totalSpent = this.rewardRedemptions.reduce((acc, r) => acc + (r.hearts || 0), 0);
-    return Math.max(0, totalEarned - totalSpent);
+    return itemHeartSum + noteHeartSum + this.archivedEarnedHearts;
+  }
+
+  public getTotalSpentHearts(): number {
+    return this.rewardRedemptions.reduce((acc, r) => acc + (r.hearts || 0), 0);
+  }
+
+  public getAvailableHearts(): number {
+    return Math.max(0, this.getTotalEarnedHearts() - this.getTotalSpentHearts());
+  }
+
+  public getRewardPresets(): RewardPreset[] {
+    if (!this.rewardPresets || this.rewardPresets.length === 0) {
+      return [...DEFAULT_REWARD_PRESETS];
+    }
+    return [...this.rewardPresets];
+  }
+
+  public getRewardRedemptions(): HeartRewardRedemption[] {
+    return [...this.rewardRedemptions];
+  }
+
+  public redeemReward(title: string, hearts: number): boolean {
+    if (hearts <= 0 || this.getAvailableHearts() < hearts) {
+      return false;
+    }
+    const cleanTitle = title.trim();
+    const finalTitle = cleanTitle.length > 0 ? cleanTitle : '보상 교환';
+    const ts = currentEpochSeconds();
+    const redemption: HeartRewardRedemption = {
+      id: generateEntityId('redemption'),
+      title: finalTitle,
+      hearts,
+      createdAt: ts,
+      redeemedByRole: this.deviceRole === 'parent' ? '부모' : '아이',
+    };
+    this.rewardRedemptions.unshift(redemption);
+    if (this.rewardRedemptions.length > 50) {
+      this.rewardRedemptions = this.rewardRedemptions.slice(0, 50);
+    }
+    this.saveSnapshotMeta();
+    this.notify();
+    this.emitToast(
+      `🎁 [${finalTitle}] 교환 완료! 하트 ${hearts}개가 차감되었어요.`,
+      'success'
+    );
+    return true;
   }
 
   public getCompletionStats(

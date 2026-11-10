@@ -24,6 +24,7 @@ export interface NavigationProps {
   isParentMode?: boolean;
   onOpenParentPin?: () => void;
   onLockParentMode?: () => void;
+  onOpenRewardExchange?: () => void;
   availableHearts?: number;
   availableStars?: number;
   pendingStarRedemptions?: number;
@@ -39,6 +40,7 @@ export const Navigation: React.FC<NavigationProps> = ({
   isParentMode = false,
   onOpenParentPin,
   onLockParentMode,
+  onOpenRewardExchange,
   availableHearts = 0,
   availableStars = 0,
   pendingStarRedemptions = 0,
@@ -72,14 +74,16 @@ export const Navigation: React.FC<NavigationProps> = ({
             </div>
 
             {availableHearts > 0 && (
-              <div
+              <button
+                type="button"
+                onClick={onOpenRewardExchange}
                 data-testid="header-hearts-badge"
-                className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-pink-50 text-pink-700 text-xs font-bold border border-pink-200/80 shadow-sm"
-                title={`보유 하트: ${availableHearts}개`}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-pink-50 hover:bg-pink-100 active:bg-pink-200 text-pink-700 text-xs font-bold border border-pink-200/80 shadow-xs transition-colors cursor-pointer"
+                title={`하트 보상 교환 (보유 하트: ${availableHearts}개)`}
               >
                 <Heart className="w-3.5 h-3.5 fill-rose-500 text-rose-500" />
                 <span>{availableHearts}</span>
-              </div>
+              </button>
             )}
 
             <button
