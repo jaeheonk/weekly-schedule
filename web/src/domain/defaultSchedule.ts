@@ -112,7 +112,7 @@ export function deterministicUUID(seed: string): string {
   for (let i = 0; i < 16; i++) {
     hex.push(bytes[i].toString(16).padStart(2, '0'));
   }
-  const str = hex.join('');
+  const str = hex.join('').toUpperCase();
   return `${str.slice(0, 8)}-${str.slice(8, 12)}-${str.slice(12, 16)}-${str.slice(16, 20)}-${str.slice(20, 32)}`;
 }
 

@@ -5,11 +5,31 @@ import {
   mergeSnapshots,
   mergeStarTransactions,
   mergeStarRedemptionRequests,
+  normalizeCompoundKey,
+  normalizeItemsToCanonicalIDs,
 } from './snapshotMerge';
 import { CloudSyncSnapshot, SyncTimestampedFlag, StarTransaction, StarRedemptionRequest } from '../types/snapshot';
 import { ScheduleItem } from '../types/schedule';
 
 describe('snapshotMerge domain logic', () => {
+  describe('normalizeCompoundKey', () => {
+    it('uppercases UUID in compound key with week prefix', () => {
+      expect(normalizeCompoundKey('2026-W46_702bed2e-2564-46a4-9d0b-1da23793f519')).toBe(
+        '2026-W46_702BED2E-2564-46A4-9D0B-1DA23793F519'
+      );
+    });
+
+    it('uppercases standalone UUID', () => {
+      expect(normalizeCompoundKey('702bed2e-2564-46a4-9d0b-1da23793f519')).toBe(
+        '702BED2E-2564-46A4-9D0B-1DA23793F519'
+      );
+    });
+
+    it('preserves non-UUID plain keys', () => {
+      expect(normalizeCompoundKey('key1')).toBe('key1');
+    });
+  });
+
   describe('mergeFlagDict', () => {
     it('remote with newer updatedAt overrides older local flag', () => {
       const local: Record<string, SyncTimestampedFlag> = {
@@ -46,6 +66,24 @@ describe('snapshotMerge domain logic', () => {
       const merged = mergeFlagDict(local, remote);
       expect(merged.keyA).toEqual({ isSet: true, updatedAt: 100 });
       expect(merged.keyB).toEqual({ isSet: true, updatedAt: 150 });
+    });
+
+    it('normalizes compound keys with lowercase UUID to uppercase and collapses duplicates', () => {
+      const local: Record<string, SyncTimestampedFlag> = {
+        '2026-W46_702bed2e-2564-46a4-9d0b-1da23793f519': { isSet: true, updatedAt: 100 },
+      };
+      const remote: Record<string, SyncTimestampedFlag> = {
+        '2026-W46_702BED2E-2564-46A4-9D0B-1DA23793F519': { isSet: false, updatedAt: 200 },
+      };
+
+      const merged = mergeFlagDict(local, remote);
+      const keys = Object.keys(merged);
+      expect(keys).toHaveLength(1);
+      expect(keys[0]).toBe('2026-W46_702BED2E-2564-46A4-9D0B-1DA23793F519');
+      expect(merged['2026-W46_702BED2E-2564-46A4-9D0B-1DA23793F519']).toEqual({
+        isSet: false,
+        updatedAt: 200,
+      });
     });
   });
 
@@ -94,7 +132,7 @@ describe('snapshotMerge domain logic', () => {
 
       const merged = mergeScheduleItems(local, remote, deletedTs);
       expect(merged).toHaveLength(1);
-      expect(merged[0].id).toBe('uuid-1');
+      expect(merged[0].id).toBe('UUID-1');
     });
 
     it('deduplicates items with same signature and sorts by weekday and time', () => {
@@ -122,8 +160,119 @@ describe('snapshotMerge domain logic', () => {
 
       const merged = mergeScheduleItems([item1, morningItem], [item2], {});
       expect(merged).toHaveLength(2);
-      expect(merged[0].id).toBe('morning-1'); // weekday 1, 8:00
-      expect(merged[1].id).toBe('dup-2');     // newer duplicate kept
+      expect(merged[0].id).toBe('MORNING-1'); // weekday 1, 8:00
+      expect(merged[1].id).toBe('DUP-2');     // newer duplicate kept
+    });
+
+    it('deduplicates items with lowercase and uppercase IDs, keeping newer user-modified item', () => {
+      // Default Faye lesson (21:30~22:30, lowercase ID, baseline timestamp)
+      const staleDefault: ScheduleItem = {
+        ...baseItem,
+        id: '702bed2e-2564-46a4-9d0b-1da23793f519',
+        weekday: 1,
+        startHour: 21,
+        startMinute: 30,
+        endHour: 22,
+        endMinute: 30,
+        title: 'Faye 수업',
+        updatedAt: 1700000000,
+      };
+      // User-modified Faye lesson from iOS (21:30~22:00, uppercase ID, newer timestamp)
+      const userModified: ScheduleItem = {
+        ...baseItem,
+        id: '702BED2E-2564-46A4-9D0B-1DA23793F519',
+        weekday: 1,
+        startHour: 21,
+        startMinute: 30,
+        endHour: 22,
+        endMinute: 0,
+        title: 'Faye 수업',
+        updatedAt: 1792310546,
+      };
+
+      // Both in remote list (as found in contaminated cloud snapshot)
+      const merged = mergeScheduleItems([], [staleDefault, userModified], {});
+      expect(merged).toHaveLength(1);
+      expect(merged[0].id).toBe('702BED2E-2564-46A4-9D0B-1DA23793F519');
+      expect(merged[0].startHour).toBe(21);
+      expect(merged[0].startMinute).toBe(30);
+      expect(merged[0].endHour).toBe(22);
+      expect(merged[0].endMinute).toBe(0);
+      expect(merged[0].updatedAt).toBe(1792310546);
+    });
+
+    it('deduplicates bedtime items when user modified time from 22:30 to 22:00', () => {
+      const staleBedtime: ScheduleItem = {
+        ...baseItem,
+        id: '041bb64b-c8af-4655-9703-4a40fc1b8e8e',
+        weekday: 1,
+        startHour: 22,
+        startMinute: 30,
+        endHour: 23,
+        endMinute: 0,
+        title: '취침',
+        updatedAt: 1700000000,
+      };
+      const userBedtime: ScheduleItem = {
+        ...baseItem,
+        id: '041BB64B-C8AF-4655-9703-4A40FC1B8E8E',
+        weekday: 1,
+        startHour: 22,
+        startMinute: 0,
+        endHour: 22,
+        endMinute: 30,
+        title: '취침',
+        updatedAt: 1792310592,
+      };
+
+      const merged = mergeScheduleItems([staleBedtime], [userBedtime], {});
+      expect(merged).toHaveLength(1);
+      expect(merged[0].id).toBe('041BB64B-C8AF-4655-9703-4A40FC1B8E8E');
+      expect(merged[0].startHour).toBe(22);
+      expect(merged[0].startMinute).toBe(0);
+      expect(merged[0].endHour).toBe(22);
+      expect(merged[0].endMinute).toBe(30);
+    });
+  });
+
+  describe('normalizeItemsToCanonicalIDs', () => {
+    const sampleItem: ScheduleItem = {
+      id: 'legacy-id',
+      weekday: 1,
+      startHour: 7,
+      startMinute: 0,
+      endHour: 7,
+      endMinute: 30,
+      title: '코딱지',
+      note: '',
+      category: 'routine',
+      iconName: 'sun',
+      subTasks: [],
+      isNotificationEnabled: false,
+      notificationLeadMinutes: [],
+      updatedAt: 100,
+    };
+
+    it('normalizes legacy random UUID to canonical deterministic uppercase ID for default master schedules', () => {
+      const legacyItem: ScheduleItem = {
+        ...sampleItem,
+        id: 'random-legacy-uuid-1234',
+        title: '코딱지',
+      };
+      const normalized = normalizeItemsToCanonicalIDs([legacyItem]);
+      expect(normalized[0].id).toBe('5D829E4E-6AC8-438D-B00D-8D5207EB2254');
+    });
+
+    it('does not overwrite ID for week-specific additions', () => {
+      const thisWeekAddition: ScheduleItem = {
+        ...sampleItem,
+        id: 'custom-addition-id',
+        targetWeekKey: '2026-W46',
+        title: '코딱지',
+      };
+      const normalized = normalizeItemsToCanonicalIDs([thisWeekAddition]);
+      expect(normalized[0].id).toBe('CUSTOM-ADDITION-ID');
+      expect(normalized[0].targetWeekKey).toBe('2026-W46');
     });
   });
 

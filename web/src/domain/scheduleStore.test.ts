@@ -33,7 +33,7 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       // Exact seed test from Swift: deterministicUUID(seed: "weekly-schedule-default-v2-1|7:0|코딱지")
       const seed = 'weekly-schedule-default-v2-1|7:0|코딱지';
       const uuid = deterministicUUID(seed);
-      expect(uuid).toBe('5d829e4e-6ac8-438d-b00d-8d5207eb2254');
+      expect(uuid).toBe('5D829E4E-6AC8-438D-B00D-8D5207EB2254');
     });
   });
 

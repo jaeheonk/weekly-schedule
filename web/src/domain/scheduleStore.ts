@@ -29,7 +29,7 @@ import {
 } from '../types/snapshot';
 import { getWeekdayNumber, getWeekKey, compareScheduleItemsByTime, formatTime } from './calendarUtils';
 import { getMasterScheduleItems } from './defaultSchedule';
-import { mergeSnapshots } from './snapshotMerge';
+import { mergeSnapshots, normalizeItemsToCanonicalIDs, normalizeCompoundKey } from './snapshotMerge';
 import { DEFAULT_FAMILY_CODE } from '../services/vercelBlobSync';
 
 export const currentEpochSeconds = (): number => Date.now() / 1000;
@@ -40,9 +40,9 @@ export const SESSION_KEYS = {
 
 export function generateEntityId(prefix: string): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
+    return crypto.randomUUID().toUpperCase();
   }
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`.toUpperCase();
 }
 
 export const STORAGE_KEYS = {
@@ -251,7 +251,7 @@ export class ScheduleStore {
       if (stored) {
         const parsed = JSON.parse(stored) as ScheduleItem[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          this.items = parsed;
+          this.items = normalizeItemsToCanonicalIDs(parsed);
           return;
         }
       }
@@ -277,7 +277,7 @@ export class ScheduleStore {
       const stored = localStorage.getItem(key);
       if (stored) {
         const parsed = JSON.parse(stored) as string[];
-        return new Set(parsed);
+        return new Set(parsed.map((k) => normalizeCompoundKey(k)));
       }
     } catch {
       // ignore storage parse errors
@@ -297,7 +297,12 @@ export class ScheduleStore {
     try {
       const stored = localStorage.getItem(key);
       if (stored) {
-        return JSON.parse(stored) as Record<string, SyncTimestampedFlag>;
+        const raw = JSON.parse(stored) as Record<string, SyncTimestampedFlag>;
+        const normalized: Record<string, SyncTimestampedFlag> = {};
+        for (const [k, v] of Object.entries(raw)) {
+          normalized[normalizeCompoundKey(k)] = v;
+        }
+        return normalized;
       }
     } catch {
       // ignore
@@ -754,7 +759,7 @@ export class ScheduleStore {
 
   public scopedKey(id: string, weekKey?: WeekKey): string {
     const wk = weekKey || this.getCurrentWeekKey();
-    return `${wk}_${id}`;
+    return `${wk}_${id.toUpperCase()}`;
   }
 
   public itemKey(itemId: string, weekKey?: WeekKey): string {
