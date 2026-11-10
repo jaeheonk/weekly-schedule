@@ -192,12 +192,14 @@ describe('App & Hash Navigation (Seam 2)', () => {
 
       render(<App syncOnMount={false} />);
 
-      // 1. Add new master schedule item via today view
+      // 1. Add new master schedule item via today view (today-add-schedule-btn defaults to thisWeek per Issue 03, so select master scope)
       const addBtn = screen.getByTestId('today-add-schedule-btn');
       fireEvent.click(addBtn);
 
       const modal = screen.getByTestId('schedule-edit-modal');
       expect(modal).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId('scope-master-radio'));
 
       const titleInput = screen.getByTestId('schedule-title-input');
       fireEvent.change(titleInput, { target: { value: '창의 로봇 코딩' } });
@@ -684,6 +686,45 @@ describe('App & Hash Navigation (Seam 2)', () => {
         } finally {
           vi.useRealTimers();
         }
+      });
+
+      it('opens ScheduleEditModal defaulted to selectedWeekday and thisWeek scope from Today view "+ 이번 주 추가" and empty state "이번 주 일정 추가하기" (Issue 03)', async () => {
+        globalScheduleStore.setCurrentDate(new Date(2026, 10, 9)); // Monday
+        globalScheduleStore.unlockParentMode();
+
+        render(<App syncOnMount={false} />);
+
+        // Select Wednesday (3)
+        fireEvent.click(screen.getByTestId('weekday-btn-3'));
+        expect(globalScheduleStore.getSelectedWeekday()).toBe(3);
+
+        // Filter to a category with 0 items on Wednesday ('free') and click "이번 주 일정 추가하기"
+        fireEvent.click(screen.getByTestId('category-chip-free'));
+        expect(screen.getByTestId('today-empty-state')).toBeInTheDocument();
+        fireEvent.click(screen.getByTestId('empty-day-add-schedule-btn'));
+
+        const modal = screen.getByTestId('schedule-edit-modal');
+        expect(modal).toBeInTheDocument();
+        expect(modal).toHaveTextContent('이번 주에만 한시적으로 적용됩니다');
+
+        // Reset filter to '전체', save a temporary item on Wednesday without changing weekday or scope
+        fireEvent.change(screen.getByTestId('schedule-title-input'), {
+          target: { value: '수요일 특별 자유시간' },
+        });
+        fireEvent.click(screen.getByTestId('save-schedule-btn'));
+
+        await waitFor(() => {
+          expect(screen.queryByTestId('schedule-edit-modal')).not.toBeInTheDocument();
+        });
+
+        // Switch category filter back to '전체' -> new item was added to Wednesday (3) with thisWeek scope!
+        fireEvent.click(screen.getByTestId('category-chip-all'));
+        const createdWedItem = globalScheduleStore
+          .getItemsForWeekday(3)
+          .find((it) => it.title === '수요일 특별 자유시간');
+        expect(createdWedItem).toBeDefined();
+        expect(createdWedItem?.weekday).toBe(3);
+        expect(createdWedItem?.targetWeekKey).toBe(globalScheduleStore.getCurrentWeekKey());
       });
     });
   });

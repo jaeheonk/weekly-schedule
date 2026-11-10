@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { TodayScheduleView } from './TodayScheduleView';
 import { ScheduleStore } from '../domain/scheduleStore';
 
@@ -271,7 +271,7 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       // Top action add schedule button
       const addBtn = screen.getByTestId('today-add-schedule-btn');
       fireEvent.click(addBtn);
-      expect(mockOpenEdit).toHaveBeenCalledWith(null);
+      expect(mockOpenEdit).toHaveBeenCalledWith(null, 1, 'thisWeek');
 
       // Skipped item2 rendered in skipped items section
       expect(screen.getByTestId('today-skipped-items-section')).toBeInTheDocument();
@@ -665,6 +665,192 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       expect(tueCard.className).not.toContain('ring-2');
       expect(screen.queryByTestId(`item-active-badge-${tueSameTimeItem.id}`)).not.toBeInTheDocument();
       expect(screen.queryByText('진행중')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Category Filter Bar, Day Section Header & Batch Actions (Issue 03)', () => {
+    it('renders CategoryFilterBar with "전체" and all 6 categories (icons, colors, item counts for selectedWeekday), filters Daily Schedule on chip click, and opens add modal with selectedWeekday + thisWeek scope from "+ 이번 주 추가" and empty state "이번 주 일정 추가하기"', () => {
+      store.unlockParentMode();
+      const mockOpenEdit = vi.fn();
+
+      render(
+        <TodayScheduleView
+          store={store}
+          onPlayChime={mockPlayChime}
+          onOpenEditModal={mockOpenEdit}
+        />
+      );
+
+      // Select Wednesday (3)
+      fireEvent.click(screen.getByTestId('weekday-btn-3'));
+      expect(store.getSelectedWeekday()).toBe(3);
+
+      const wedItems = store.getItemsForWeekday(3);
+      const wedStudyItems = wedItems.filter((it) => it.category === 'study');
+      const wedMusicItems = wedItems.filter((it) => it.category === 'music');
+      const wedFreeItems = wedItems.filter((it) => it.category === 'free');
+
+      const filterBar = screen.getByTestId('category-filter-bar');
+      expect(filterBar).toBeInTheDocument();
+
+      // Verify "전체" chip and all 6 category chips with counts for Wednesday
+      const allChip = screen.getByTestId('category-chip-all');
+      expect(allChip).toHaveTextContent('전체');
+      expect(screen.getByTestId('category-count-all')).toHaveTextContent(String(wedItems.length));
+      expect(allChip).toHaveAttribute('data-selected', 'true');
+
+      for (const catKey of ['study', 'academy', 'music', 'sports', 'routine', 'free'] as const) {
+        const chip = screen.getByTestId(`category-chip-${catKey}`);
+        expect(chip).toBeInTheDocument();
+        expect(chip).toHaveAttribute('data-color');
+        const expectedCount = wedItems.filter((it) => it.category === catKey).length;
+        expect(screen.getByTestId(`category-count-${catKey}`)).toHaveTextContent(
+          String(expectedCount)
+        );
+      }
+
+      // Filter by 'music' on Wednesday -> only music items are rendered
+      fireEvent.click(screen.getByTestId('category-chip-music'));
+      expect(screen.getByTestId('category-chip-music')).toHaveAttribute('data-selected', 'true');
+      for (const item of wedMusicItems) {
+        expect(screen.getByTestId(`schedule-card-${item.id}`)).toBeInTheDocument();
+      }
+      for (const item of wedStudyItems) {
+        expect(screen.queryByTestId(`schedule-card-${item.id}`)).not.toBeInTheDocument();
+      }
+
+      // Clicking "+ 이번 주 추가" opens modal with selectedWeekday = 3 and scope = 'thisWeek'
+      const topAddBtn = screen.getByTestId('today-add-schedule-btn');
+      expect(topAddBtn).toHaveTextContent('+ 이번 주 추가');
+      fireEvent.click(topAddBtn);
+      expect(mockOpenEdit).toHaveBeenLastCalledWith(null, 3, 'thisWeek');
+
+      // Filter by 'free' on Wednesday (0 items on Wednesday) -> shows empty day state card
+      expect(wedFreeItems).toHaveLength(0);
+      fireEvent.click(screen.getByTestId('category-chip-free'));
+      const emptyState = screen.getByTestId('today-empty-state');
+      expect(emptyState).toBeInTheDocument();
+
+      // Clicking "이번 주 일정 추가하기" in empty state opens modal with selectedWeekday = 3 and scope = 'thisWeek'
+      const emptyAddBtn = screen.getByTestId('empty-day-add-schedule-btn');
+      expect(emptyAddBtn).toHaveTextContent('이번 주 일정 추가하기');
+      fireEvent.click(emptyAddBtn);
+      expect(mockOpenEdit).toHaveBeenCalledTimes(2);
+      expect(mockOpenEdit).toHaveBeenLastCalledWith(null, 3, 'thisWeek');
+
+      // Clicking "전체" chip restores all Wednesday items
+      fireEvent.click(allChip);
+      expect(allChip).toHaveAttribute('data-selected', 'true');
+      for (const item of wedItems) {
+        expect(screen.getByTestId(`schedule-card-${item.id}`)).toBeInTheDocument();
+      }
+    });
+
+    it('renders selected day section header with weekday fullName, "TODAY" badge only on actual today, "이번주 조정 N건" badge, per-day completion/verification stats, batch verification banner ("모두 확인 + ❤️"), and completion reset button ("초기화")', () => {
+      // Monday Nov 9, 2026 is actual today (1)
+      store.unlockParentMode();
+
+      render(<TodayScheduleView store={store} onPlayChime={mockPlayChime} />);
+
+      const dayHeader = screen.getByTestId('day-section-header');
+      expect(dayHeader).toBeInTheDocument();
+
+      // 1. On Monday (actual today): shows "월요일" and "TODAY" badge, no adjustments yet, 0/N stats, no reset button, no waiting banner
+      const monStats = store.getCompletionStats(1);
+      expect(screen.getByTestId('selected-day-title')).toHaveTextContent('월요일');
+      expect(screen.getByTestId('selected-day-today-badge')).toHaveTextContent('TODAY');
+      expect(screen.queryByTestId('selected-day-adjustment-badge')).not.toBeInTheDocument();
+      expect(screen.getByTestId('selected-day-completed-stat')).toHaveTextContent(
+        `아이 0/${monStats.total}`
+      );
+      expect(screen.getByTestId('selected-day-verified-stat')).toHaveTextContent(
+        `부모확인 0/${monStats.total}`
+      );
+      expect(screen.queryByTestId('selected-day-reset-completions-btn')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('day-waiting-verification-banner')).not.toBeInTheDocument();
+
+      // 2. Switch to Wednesday (3)
+      fireEvent.click(screen.getByTestId('weekday-btn-3'));
+      expect(store.getSelectedWeekday()).toBe(3);
+
+      // Header shows "수요일", hides "TODAY" badge
+      expect(screen.getByTestId('selected-day-title')).toHaveTextContent('수요일');
+      expect(screen.queryByTestId('selected-day-today-badge')).not.toBeInTheDocument();
+
+      // Create 2 Weekly Overrides on Wednesday (1 time adjustment + 1 skip) -> "이번주 조정 2건" badge appears
+      const wedItems = store.getItemsForWeekday(3);
+      act(() => {
+        store.updateItem({ ...wedItems[0], startHour: 20, endHour: 21 }, 'thisWeek');
+        store.skipItemForThisWeek(wedItems[1]);
+      });
+      expect(screen.getByTestId('selected-day-adjustment-badge')).toHaveTextContent(
+        '이번주 조정 2건'
+      );
+
+      // 3. Complete 2 checkable items on Wednesday -> stats update, "초기화" button and waiting banner appear
+      const wedCheckables = store
+        .getItemsForWeekday(3)
+        .filter((it) => store.isItemCheckable(it));
+      const [waitItem1, waitItem2] = wedCheckables;
+
+      fireEvent.click(screen.getByTestId(`item-check-btn-${waitItem1.id}`));
+      fireEvent.click(screen.getByTestId(`item-check-btn-${waitItem2.id}`));
+
+      const wedStatsAfterCheck = store.getCompletionStats(3);
+      expect(screen.getByTestId('selected-day-completed-stat')).toHaveTextContent(
+        `아이 2/${wedStatsAfterCheck.total}`
+      );
+      expect(screen.getByTestId('selected-day-verified-stat')).toHaveTextContent(
+        `부모확인 0/${wedStatsAfterCheck.total}`
+      );
+
+      // Actual today hero card stats remain 0/monStats.total (separated from Wednesday!)
+      expect(screen.getByTestId('stats-completed-badge')).toHaveTextContent(
+        `다 했어요 0/${monStats.total}`
+      );
+
+      // "초기화" button is now visible
+      const resetBtn = screen.getByTestId('selected-day-reset-completions-btn');
+      expect(resetBtn).toBeInTheDocument();
+      expect(resetBtn).toHaveTextContent('초기화');
+
+      // Orange waiting banner is visible with count = 2 and "모두 확인 + ❤️" button
+      const waitingBanner = screen.getByTestId('day-waiting-verification-banner');
+      expect(waitingBanner).toBeInTheDocument();
+      expect(waitingBanner).toHaveTextContent(
+        "아이가 '다 했어요' 체크한 숙제 2개가 부모님 확인을 기다리고 있어요!"
+      );
+      const verifyAllBtn = screen.getByTestId('verify-all-waiting-btn');
+      expect(verifyAllBtn).toHaveTextContent('모두 확인 + ❤️');
+
+      // 4. Click "모두 확인 + ❤️" -> stamps both items (and their subtasks) and awards +1 heart to each
+      const heartsBefore = store.getAvailableHearts();
+      fireEvent.click(verifyAllBtn);
+
+      expect(store.isParentVerified(waitItem1)).toBe(true);
+      expect(store.isParentVerified(waitItem2)).toBe(true);
+      for (const sub of [...waitItem1.subTasks, ...waitItem2.subTasks]) {
+        expect(store.isSubTaskParentVerified(sub)).toBe(true);
+      }
+      expect(store.getAvailableHearts()).toBe(heartsBefore + 2);
+      expect(screen.getByTestId('selected-day-verified-stat')).toHaveTextContent(
+        `부모확인 2/${wedStatsAfterCheck.total}`
+      );
+      expect(screen.queryByTestId('day-waiting-verification-banner')).not.toBeInTheDocument();
+
+      // 5. Click "초기화" -> clears all completions and parent verifications on Wednesday
+      fireEvent.click(screen.getByTestId('selected-day-reset-completions-btn'));
+      expect(store.isCompleted(waitItem1)).toBe(false);
+      expect(store.isParentVerified(waitItem1)).toBe(false);
+      expect(store.isCompleted(waitItem2)).toBe(false);
+      expect(store.isParentVerified(waitItem2)).toBe(false);
+      expect(screen.getByTestId('selected-day-completed-stat')).toHaveTextContent(
+        `아이 0/${wedStatsAfterCheck.total}`
+      );
+      expect(screen.getByTestId('selected-day-verified-stat')).toHaveTextContent(
+        `부모확인 0/${wedStatsAfterCheck.total}`
+      );
+      expect(screen.queryByTestId('selected-day-reset-completions-btn')).not.toBeInTheDocument();
     });
   });
 });

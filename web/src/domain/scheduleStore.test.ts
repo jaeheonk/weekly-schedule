@@ -1237,5 +1237,89 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(store.getCurrentActiveItems()).toHaveLength(0);
       expect(store.getNextUpcomingItem()).toBeNull();
     });
+
+    it('batch verifies all waiting items on a selected weekday with +1 Praise Heart each and resets completions for that weekday (Issue 03)', () => {
+      const monday = new Date(2026, 10, 9);
+      const store = new ScheduleStore({ currentDate: monday });
+      store.unlockParentMode();
+
+      const wedCheckables = store
+        .getItemsForWeekday(3)
+        .filter((it) => store.isItemCheckable(it));
+      expect(wedCheckables.length).toBeGreaterThanOrEqual(3);
+
+      const [itemAlreadyVerified, itemWaiting1, itemWaiting2, itemIncomplete] = wedCheckables;
+
+      // 1. itemAlreadyVerified: child completed + parent verified + 2 existing hearts
+      store.toggleCompletion(itemAlreadyVerified);
+      store.sendItemReaction({
+        item: itemAlreadyVerified,
+        addHearts: 2,
+        sticker: 'star',
+        comment: '미리 확인 완료',
+        alsoVerify: true,
+      });
+
+      // 2. itemWaiting1 & itemWaiting2: child completed (waiting for parent verification)
+      store.toggleCompletion(itemWaiting1);
+      store.toggleCompletion(itemWaiting2);
+
+      //Also complete 1 item on Monday (1) to ensure Wednesday reset does not affect Monday
+      const monCheckable = store.getItemsForWeekday(1).find((it) => store.isItemCheckable(it))!;
+      store.toggleCompletion(monCheckable);
+      store.toggleParentVerification(monCheckable);
+
+      const statsBefore = store.getCompletionStats(3);
+      expect(statsBefore.completed).toBe(3);
+      expect(statsBefore.verified).toBe(1);
+      expect(statsBefore.waiting).toBe(2);
+      expect(store.getAvailableHearts()).toBe(2);
+
+      // Execute batch verification on Wednesday (3) with giveHeartToEach = true
+      const verifiedCount = store.verifyAllWaitingItems(3, true);
+      expect(verifiedCount).toBe(2);
+
+      const statsAfterVerify = store.getCompletionStats(3);
+      expect(statsAfterVerify.completed).toBe(3);
+      expect(statsAfterVerify.verified).toBe(3);
+      expect(statsAfterVerify.waiting).toBe(0);
+
+      // Waiting items and their subtasks are now parent-verified and received +1 heart each
+      for (const waitingItem of [itemWaiting1, itemWaiting2]) {
+        expect(store.isParentVerified(waitingItem)).toBe(true);
+        for (const sub of waitingItem.subTasks) {
+          expect(store.isSubTaskCompleted(sub)).toBe(true);
+          expect(store.isSubTaskParentVerified(sub)).toBe(true);
+        }
+        expect(store.getItemReaction(waitingItem)?.heartCount).toBe(1);
+      }
+
+      // Already-verified item did NOT receive an extra heart, and incomplete item stayed incomplete
+      expect(store.getItemReaction(itemAlreadyVerified)?.heartCount).toBe(2);
+      expect(store.isCompleted(itemIncomplete)).toBe(false);
+      expect(store.isParentVerified(itemIncomplete)).toBe(false);
+      expect(store.getAvailableHearts()).toBe(4);
+
+      // Reset completions for Wednesday (3) including parent-verified items
+      store.resetCompletionsForWeekday(3, true);
+
+      const statsAfterReset = store.getCompletionStats(3);
+      expect(statsAfterReset.completed).toBe(0);
+      expect(statsAfterReset.verified).toBe(0);
+      expect(statsAfterReset.waiting).toBe(0);
+
+      for (const item of [itemAlreadyVerified, itemWaiting1, itemWaiting2]) {
+        expect(store.isCompleted(item)).toBe(false);
+        expect(store.isParentVerified(item)).toBe(false);
+        for (const sub of item.subTasks) {
+          expect(store.isSubTaskCompleted(sub)).toBe(false);
+          expect(store.isSubTaskParentVerified(sub)).toBe(false);
+        }
+      }
+
+      // Monday's completion and verification remain untouched
+      expect(store.isCompleted(monCheckable)).toBe(true);
+      expect(store.isParentVerified(monCheckable)).toBe(true);
+    });
   });
 });

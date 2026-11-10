@@ -948,19 +948,54 @@ export class ScheduleStore {
       return false;
     }
 
+    this.markItemAndSubTasksParentVerified(item, weekKey, now);
+
+    this.refreshFlagSetsFromDictionaries();
+    this.saveCompletions();
+    return true;
+  }
+
+  private markItemAndSubTasksParentVerified(
+    item: ScheduleItem,
+    weekKey: WeekKey | undefined,
+    now: number
+  ): void {
+    const key = this.itemKey(item.id, weekKey);
     this.completedItemKeys.add(key);
+    this.parentVerifiedItemKeys.add(key);
     this.completionFlags[key] = { isSet: true, updatedAt: now };
     this.parentVerifiedFlags[key] = { isSet: true, updatedAt: now };
     for (const sub of item.subTasks) {
       const sKey = this.subTaskKey(sub.id, weekKey);
       this.completedSubTaskKeys.add(sKey);
+      this.parentVerifiedSubTaskKeys.add(sKey);
       this.subTaskCompletionFlags[sKey] = { isSet: true, updatedAt: now };
       this.parentVerifiedSubTaskFlags[sKey] = { isSet: true, updatedAt: now };
     }
+  }
 
-    this.refreshFlagSetsFromDictionaries();
-    this.saveCompletions();
-    return true;
+  private clearItemAndSubTaskFlags(
+    item: ScheduleItem,
+    weekKey: WeekKey | undefined,
+    now: number,
+    includeParentVerified: boolean
+  ): void {
+    const key = this.itemKey(item.id, weekKey);
+    this.completedItemKeys.delete(key);
+    this.completionFlags[key] = { isSet: false, updatedAt: now };
+    if (includeParentVerified) {
+      this.parentVerifiedItemKeys.delete(key);
+      this.parentVerifiedFlags[key] = { isSet: false, updatedAt: now };
+    }
+    for (const sub of item.subTasks) {
+      const sKey = this.subTaskKey(sub.id, weekKey);
+      this.completedSubTaskKeys.delete(sKey);
+      this.subTaskCompletionFlags[sKey] = { isSet: false, updatedAt: now };
+      if (includeParentVerified) {
+        this.parentVerifiedSubTaskKeys.delete(sKey);
+        this.parentVerifiedSubTaskFlags[sKey] = { isSet: false, updatedAt: now };
+      }
+    }
   }
 
   public toggleSubTaskParentVerification(
@@ -1004,6 +1039,69 @@ export class ScheduleStore {
     this.refreshFlagSetsFromDictionaries();
     this.saveCompletions();
     return true;
+  }
+
+  public verifyAllWaitingItems(
+    weekday: WeekdayNumber,
+    giveHeartToEach: boolean = true,
+    weekKey?: WeekKey
+  ): number {
+    const wk = weekKey || this.getCurrentWeekKey();
+    const dayItems = this.getItemsForWeekday(weekday, wk).filter((it) =>
+      this.isItemCheckable(it)
+    );
+    const now = Date.now() / 1000;
+    let verifiedCount = 0;
+
+    for (const item of dayItems) {
+      if (!this.canParentVerify(item, wk)) continue;
+      verifiedCount += 1;
+      this.markItemAndSubTasksParentVerified(item, wk, now);
+
+      if (giveHeartToEach) {
+        const key = this.itemKey(item.id, wk);
+        const existing: ItemParentReaction = this.itemReactions[key]
+          ? { ...this.itemReactions[key] }
+          : {
+              itemKey: key,
+              heartCount: 0,
+              sticker: 'heart',
+              comment: '',
+              comments: [],
+              updatedAt: now,
+            };
+        existing.heartCount = (existing.heartCount || 0) + 1;
+        existing.updatedAt = now;
+        this.itemReactions[key] = existing;
+      }
+    }
+
+    if (verifiedCount > 0) {
+      this.refreshFlagSetsFromDictionaries();
+      this.saveSnapshotMeta();
+      this.saveCompletions();
+    }
+    return verifiedCount;
+  }
+
+  public resetCompletionsForWeekday(
+    weekday: WeekdayNumber,
+    includeParentVerified: boolean = true,
+    weekKey?: WeekKey
+  ): void {
+    const wk = weekKey || this.getCurrentWeekKey();
+    const dayItems = this.getItemsForWeekday(weekday, wk);
+    const now = Date.now() / 1000;
+
+    for (const item of dayItems) {
+      const key = this.itemKey(item.id, wk);
+      if (includeParentVerified || !this.parentVerifiedItemKeys.has(key)) {
+        this.clearItemAndSubTaskFlags(item, wk, now, includeParentVerified);
+      }
+    }
+
+    this.refreshFlagSetsFromDictionaries();
+    this.saveCompletions();
   }
 
   public sendItemReaction(options: {

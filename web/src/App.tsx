@@ -219,7 +219,13 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
                 targetItem: target === undefined ? null : target,
               })
             }
-            onOpenEditModal={(target) => handleOpenEditModal(target || null, selectedWeekday)}
+            onOpenEditModal={(target, weekday, scope) =>
+              handleOpenEditModal(
+                target || null,
+                weekday || selectedWeekday,
+                scope || (target ? 'master' : 'thisWeek')
+              )
+            }
             onOpenParentPin={(day) => {
               if (day) setPendingAwardDay(day as WeekdayNumber);
               setIsPinModalOpen(true);
