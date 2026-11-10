@@ -157,7 +157,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
     .sort(compareScheduleItemsByTime);
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col text-slate-800">
+    <div className="min-h-screen bg-slate-50 flex flex-col text-slate-800 overflow-x-hidden w-full max-w-full">
       <SyncToast
         status={localToast ? localToast.status : syncStatus}
         message={localToast ? localToast.message : toastMessage}
