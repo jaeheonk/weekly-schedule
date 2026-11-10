@@ -47,6 +47,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
 }) => {
   const [, setRenderVersion] = useState(0);
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
+  const [focusedItemId, setFocusedItemId] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = store.subscribe(() => {
@@ -86,18 +87,50 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
     return () => clearTimeout(timer);
   }, [noticeMessage]);
 
+  const currentDate = store.getCurrentDate();
   const todayWeekday = store.getTodayWeekday();
   const selectedWeekday = store.getSelectedWeekday();
   const todayWeekdayInfo = WEEKDAYS.find((w) => w.number === todayWeekday);
   const effectiveTodayName = weekdayName || todayWeekdayInfo?.fullName || '오늘';
+  const todayDateTitle = `${currentDate.getMonth() + 1}월 ${currentDate.getDate()}일 ${effectiveTodayName}`;
   const displayedItems = store.getItemsForWeekday(selectedWeekday);
   const stats = store.getCompletionStats(todayWeekday);
   const isParentMode = store.isParentMode();
   const availableHearts = store.getAvailableHearts();
   const latestPraise = store.getLatestPraiseNote();
+  const currentActiveItems = store.getCurrentActiveItems();
+  const currentActiveItem = currentActiveItems[0] || null;
+  const nextUpcomingItem = store.getNextUpcomingItem();
   const skippedSelectedDayItems = store
     .getMasterItems()
     .filter((it) => it.weekday === selectedWeekday && store.isSkippedThisWeek(it.id));
+
+  const focusScheduleCard = (itemId: string) => {
+    const el = document.getElementById(`schedule-card-${itemId}`);
+    if (el) {
+      el.focus();
+      if (typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!focusedItemId || selectedWeekday !== todayWeekday) return;
+    focusScheduleCard(focusedItemId);
+  }, [focusedItemId, selectedWeekday, todayWeekday]);
+
+  const handleJumpToTodayItem = (item: ScheduleItem) => {
+    store.setSelectedWeekday(todayWeekday);
+    setFocusedItemId(item.id);
+    focusScheduleCard(item.id);
+  };
+
+  const getHeroItemStatusLabel = (item: ScheduleItem, isCurrent: boolean): string => {
+    if (store.isParentVerified(item)) return '부모 확인 완료';
+    if (store.isCompleted(item)) return '다 했어요 완료';
+    return isCurrent ? '진행 중' : '예정';
+  };
 
   const handleItemToggle = (item: ScheduleItem) => {
     const wasCompleted = store.isCompleted(item);
@@ -179,64 +212,222 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
         </div>
       )}
 
-      {/* Family Praise Banner (if praise notes exist) */}
-      {latestPraise && (
-        <div
-          data-testid="family-praise-banner"
-          className="bg-gradient-to-r from-pink-500 via-rose-500 to-amber-500 rounded-3xl p-4 sm:p-5 text-white shadow-lg shadow-pink-500/15 relative overflow-hidden flex items-center justify-between gap-4 animate-in fade-in slide-in-from-top duration-300"
-        >
-          <div className="flex items-center gap-3.5 min-w-0">
-            <div className="w-12 h-12 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-2xl shrink-0 shadow-inner">
-              {STICKER_EMOJIS[latestPraise.sticker] || '❤️'}
+      {/* 1. Live Status Hero Card (Pinned to Actual Today) */}
+      <div
+        data-testid="progress-gauge-card"
+        className="bg-gradient-to-br from-blue-600 via-indigo-600 to-indigo-700 rounded-3xl p-5 sm:p-6 text-white shadow-lg shadow-indigo-500/10 relative overflow-hidden"
+      >
+        <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="relative z-10 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span
+                data-testid="hero-today-date"
+                className="text-xs font-bold bg-white/20 backdrop-blur-sm px-2.5 py-0.5 rounded-full text-white"
+              >
+                {todayDateTitle}
+              </span>
+              <span className="text-xs text-blue-100 font-medium">일일 체크리스트</span>
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 mb-0.5">
-                <span className="text-[11px] font-extrabold bg-white/25 px-2 py-0.5 rounded-full uppercase tracking-wider">
-                  부모님의 응원 카드
-                </span>
-                {latestPraise.hearts > 0 && (
-                  <span className="text-xs font-black text-amber-200 flex items-center gap-1">
-                    <Heart className="w-3.5 h-3.5 fill-amber-200" />
-                    <span>+{latestPraise.hearts}</span>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                data-testid="today-hero-reward-exchange-btn"
+                onClick={onOpenRewardExchange}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 hover:bg-white/30 active:bg-white/40 text-white text-xs font-bold border border-white/25 shadow-xs transition-all active:scale-95 cursor-pointer backdrop-blur-sm"
+                title="하트 보상 교환 모달 열기"
+              >
+                <Heart className="w-3.5 h-3.5 fill-rose-300 text-rose-300" />
+                <span>하트 보상 교환</span>
+                {availableHearts > 0 && (
+                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black leading-none">
+                    {availableHearts}
                   </span>
                 )}
-              </div>
-              <p className="text-sm sm:text-base font-bold truncate text-white">
-                {latestPraise.message}
-              </p>
-            </div>
-          </div>
+              </button>
 
-          {isParentMode && (
-            <div className="flex items-center gap-2 shrink-0">
-              {onOpenEditModal && (
-                <button
-                  type="button"
-                  data-testid="today-add-schedule-btn"
-                  onClick={() => onOpenEditModal(null)}
-                  className="px-3.5 py-2 rounded-xl bg-white/20 hover:bg-white/30 text-white font-bold text-xs backdrop-blur-sm transition-all active:scale-95 flex items-center gap-1"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>일정 추가</span>
-                </button>
-              )}
               {onOpenPraiseModal && (
                 <button
                   type="button"
                   data-testid="send-family-praise-btn"
                   onClick={() => onOpenPraiseModal(null)}
-                  className="px-3.5 py-2 rounded-xl bg-white text-rose-600 hover:bg-rose-50 font-bold text-xs shadow-md transition-all active:scale-95"
+                  className="flex items-center gap-1 px-3 py-1 rounded-full bg-pink-500/90 hover:bg-pink-500 text-white text-xs font-bold border border-pink-300/40 shadow-xs transition-all active:scale-95 cursor-pointer"
                 >
-                  응원 보내기
+                  <Heart className="w-3.5 h-3.5 fill-white text-white" />
+                  <span>응원 보내기</span>
                 </button>
               )}
+
+              <div className="flex items-center gap-1.5 text-xs font-bold bg-white/15 px-3 py-1 rounded-full">
+                <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                <span data-testid="progress-percentage-text">{stats.percentage}%</span>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h2 className="text-lg sm:text-xl font-black tracking-tight">{getSlogan()}</h2>
+          </div>
+
+          {/* Animated Progress Bar */}
+          <div className="space-y-1.5 pt-1">
+            <div className="w-full bg-black/20 h-3 rounded-full overflow-hidden p-0.5">
+              <div
+                data-testid="progress-bar-fill"
+                className="h-full bg-gradient-to-r from-emerald-300 via-teal-300 to-emerald-400 rounded-full transition-all duration-500 ease-out shadow-sm"
+                style={{ width: `${stats.percentage}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between text-xs font-medium text-blue-100 pt-1">
+              <div className="flex items-center gap-3">
+                <span data-testid="stats-completed-badge" className="flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>
+                    다 했어요 {stats.completed}/{stats.total}
+                  </span>
+                </span>
+                <span data-testid="stats-verified-badge" className="flex items-center gap-1 text-emerald-200">
+                  <Award className="w-3.5 h-3.5 text-emerald-300" />
+                  <span>
+                    부모확인 {stats.verified}/{stats.total}
+                  </span>
+                </span>
+              </div>
+
+              <span>남은 할 일 {Math.max(0, stats.total - stats.completed)}개</span>
+            </div>
+          </div>
+
+          {/* Latest Family Praise Banner inside Hero Card */}
+          {latestPraise && (
+            <div
+              data-testid="family-praise-banner"
+              className="bg-white/15 backdrop-blur-md rounded-2xl p-3 sm:p-3.5 text-white border border-white/20 flex items-center justify-between gap-3"
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center text-xl shrink-0 shadow-inner">
+                  {STICKER_EMOJIS[latestPraise.sticker] || '❤️'}
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="text-[11px] font-extrabold bg-white/25 px-2 py-0.5 rounded-full uppercase tracking-wider text-yellow-200">
+                      부모님의 응원 카드
+                    </span>
+                    {latestPraise.hearts > 0 && (
+                      <span className="text-xs font-black text-amber-200 flex items-center gap-1">
+                        <Heart className="w-3.5 h-3.5 fill-amber-200" />
+                        <span>+{latestPraise.hearts}</span>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs sm:text-sm font-bold truncate text-white">
+                    {latestPraise.message}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
+
+          {/* Real-Time Current Active & Next Upcoming Items for Actual Today */}
+          <div className="pt-2 border-t border-white/20 space-y-2">
+            {currentActiveItem && (
+              <button
+                type="button"
+                data-testid="hero-current-active-item"
+                onClick={() => handleJumpToTodayItem(currentActiveItem)}
+                className="w-full text-left rounded-2xl bg-white/15 hover:bg-white/25 p-3 border border-white/20 transition-all active:scale-[0.99] cursor-pointer space-y-1.5"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 font-extrabold bg-white/25 px-2.5 py-0.5 rounded-full text-white">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>지금 하는 일</span>
+                    </span>
+                    <span className="text-blue-100 font-semibold">
+                      {formatTimeRange(
+                        currentActiveItem.startHour,
+                        currentActiveItem.startMinute,
+                        currentActiveItem.endHour,
+                        currentActiveItem.endMinute
+                      )}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      data-testid="hero-current-active-status"
+                      className={`px-2 py-0.5 rounded-full font-extrabold text-[11px] ${
+                        store.isParentVerified(currentActiveItem)
+                          ? 'bg-emerald-500 text-white'
+                          : store.isCompleted(currentActiveItem)
+                          ? 'bg-amber-300 text-indigo-950'
+                          : 'bg-black/25 text-white'
+                      }`}
+                    >
+                      {getHeroItemStatusLabel(currentActiveItem, true)}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-black/25 text-[11px] font-bold text-white">
+                      {store.getRemainingMinutesForActive(currentActiveItem)}분 남음
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm sm:text-base font-black text-white truncate">
+                    {currentActiveItem.title}
+                  </span>
+                </div>
+              </button>
+            )}
+
+            {nextUpcomingItem ? (
+              <button
+                type="button"
+                data-testid="hero-next-upcoming-item"
+                onClick={() => handleJumpToTodayItem(nextUpcomingItem)}
+                className="w-full text-left rounded-2xl bg-black/20 hover:bg-black/30 px-3 py-2.5 border border-white/15 transition-all active:scale-[0.99] cursor-pointer flex flex-wrap items-center justify-between gap-2 text-xs"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-extrabold bg-white/20 px-2 py-0.5 rounded-full text-white shrink-0">
+                    다음 일정
+                  </span>
+                  <span className="font-bold text-white truncate">{nextUpcomingItem.title}</span>
+                  <span className="text-blue-100 font-medium shrink-0">
+                    {formatTimeRange(
+                      nextUpcomingItem.startHour,
+                      nextUpcomingItem.startMinute,
+                      nextUpcomingItem.endHour,
+                      nextUpcomingItem.endMinute
+                    )}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="px-2 py-0.5 rounded-full bg-white/15 text-[11px] font-bold text-white">
+                    {getHeroItemStatusLabel(nextUpcomingItem, false)}
+                  </span>
+                  <span className="font-extrabold text-amber-300">
+                    {store.getMinutesUntilStart(nextUpcomingItem)}분 뒤
+                  </span>
+                </div>
+              </button>
+            ) : (
+              !currentActiveItem && (
+                <div
+                  data-testid="hero-no-upcoming-items"
+                  className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-blue-100 py-1"
+                >
+                  <Sparkles className="w-4 h-4 text-yellow-300 shrink-0" />
+                  <span>오늘 예정된 시간표가 모두 끝났어요! 푹 쉬세요 🌙</span>
+                </div>
+              )
+            )}
+          </div>
         </div>
-      )}
+      </div>
 
       {/* Top Action Bar ("오늘" Return Button + Parent Mode Quick Actions) */}
-      {(selectedWeekday !== todayWeekday || (isParentMode && !latestPraise)) && (
+      {(selectedWeekday !== todayWeekday || (isParentMode && onOpenEditModal)) && (
         <div className="flex items-center justify-end gap-2">
           {selectedWeekday !== todayWeekday && (
             <button
@@ -248,7 +439,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
               <span>오늘</span>
             </button>
           )}
-          {isParentMode && !latestPraise && onOpenEditModal && (
+          {isParentMode && onOpenEditModal && (
             <button
               type="button"
               data-testid="today-add-schedule-btn"
@@ -257,17 +448,6 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
             >
               <Plus className="w-3.5 h-3.5 text-blue-600" />
               <span>새 일정 추가</span>
-            </button>
-          )}
-          {isParentMode && !latestPraise && onOpenPraiseModal && (
-            <button
-              type="button"
-              data-testid="send-family-praise-btn"
-              onClick={() => onOpenPraiseModal(null)}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-gradient-to-r from-pink-500 to-rose-500 text-white font-bold text-xs shadow-md shadow-pink-500/20 hover:from-pink-600 hover:to-rose-600 transition-all active:scale-95"
-            >
-              <Heart className="w-3.5 h-3.5 fill-white" />
-              <span>아이에게 전체 응원 보내기</span>
             </button>
           )}
         </div>
@@ -442,84 +622,6 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
         })}
       </div>
 
-      {/* 1. Daily Progress Gauge Card */}
-      <div
-        data-testid="progress-gauge-card"
-        className="bg-gradient-to-br from-blue-600 via-indigo-600 to-indigo-700 rounded-3xl p-5 sm:p-6 text-white shadow-lg shadow-indigo-500/10 relative overflow-hidden"
-      >
-        <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none" />
-
-        <div className="relative z-10 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold bg-white/20 backdrop-blur-sm px-2.5 py-0.5 rounded-full text-white">
-                {effectiveTodayName}
-              </span>
-              <span className="text-xs text-blue-100 font-medium">일일 체크리스트</span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                data-testid="today-hero-reward-exchange-btn"
-                onClick={onOpenRewardExchange}
-                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 hover:bg-white/30 active:bg-white/40 text-white text-xs font-bold border border-white/25 shadow-xs transition-all active:scale-95 cursor-pointer backdrop-blur-sm"
-                title="하트 보상 교환 모달 열기"
-              >
-                <Heart className="w-3.5 h-3.5 fill-rose-300 text-rose-300" />
-                <span>하트 보상 교환</span>
-                {availableHearts > 0 && (
-                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black leading-none">
-                    {availableHearts}
-                  </span>
-                )}
-              </button>
-
-              <div className="flex items-center gap-1.5 text-xs font-bold bg-white/15 px-3 py-1 rounded-full">
-                <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
-                <span data-testid="progress-percentage-text">{stats.percentage}%</span>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h2 className="text-lg sm:text-xl font-black tracking-tight">{getSlogan()}</h2>
-          </div>
-
-          {/* Animated Progress Bar */}
-          <div className="space-y-1.5 pt-1">
-            <div className="w-full bg-black/20 h-3 rounded-full overflow-hidden p-0.5">
-              <div
-                data-testid="progress-bar-fill"
-                className="h-full bg-gradient-to-r from-emerald-300 via-teal-300 to-emerald-400 rounded-full transition-all duration-500 ease-out shadow-sm"
-                style={{ width: `${stats.percentage}%` }}
-              />
-            </div>
-
-            <div className="flex items-center justify-between text-xs font-medium text-blue-100 pt-1">
-              <div className="flex items-center gap-3">
-                <span data-testid="stats-completed-badge" className="flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-300" />
-                  <span>
-                    다 했어요 {stats.completed}/{stats.total}
-                  </span>
-                </span>
-                {stats.verified > 0 && (
-                  <span data-testid="stats-verified-badge" className="flex items-center gap-1 text-emerald-200">
-                    <Award className="w-3.5 h-3.5 text-emerald-300" />
-                    <span>
-                      부모확인 {stats.verified}/{stats.total}
-                    </span>
-                  </span>
-                )}
-              </div>
-
-              <span>남은 할 일 {Math.max(0, stats.total - stats.completed)}개</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* 2. Schedule Item Cards */}
       {displayedItems.length === 0 ? (
         <div className="p-12 text-center bg-white rounded-3xl border border-dashed border-slate-300 text-slate-500 space-y-2">
@@ -534,14 +636,22 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
             const isCheckable = store.isItemCheckable(item);
             const isCompleted = store.isCompleted(item);
             const isVerified = store.isParentVerified(item);
+            const isActive = selectedWeekday === todayWeekday && store.isCurrentlyActive(item);
             const reaction = store.getItemReaction(item);
             const badgeText = store.adjustmentBadgeText(item);
 
             return (
               <div
                 key={item.id}
-                className={`bg-white rounded-2xl p-4 sm:p-5 shadow-sm border transition-all relative overflow-hidden ${
-                  isCompleted
+                id={`schedule-card-${item.id}`}
+                data-testid={`schedule-card-${item.id}`}
+                data-active={isActive}
+                data-focused={focusedItemId === item.id}
+                tabIndex={-1}
+                className={`bg-white rounded-2xl p-4 sm:p-5 shadow-sm border transition-all relative overflow-hidden outline-none ${
+                  isActive
+                    ? 'ring-2 ring-blue-500 border-blue-500 shadow-md shadow-blue-500/10'
+                    : isCompleted
                     ? 'border-slate-200 bg-slate-50/70 shadow-none'
                     : 'border-slate-200 hover:shadow-md'
                 }`}
@@ -599,6 +709,15 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                           <Clock className="w-3 h-3 text-slate-400" />
                           <span>{timeStr}</span>
                         </div>
+                        {isActive && (
+                          <span
+                            data-testid={`item-active-badge-${item.id}`}
+                            className="flex items-center gap-1 text-[11px] font-extrabold text-white bg-emerald-500 px-2 py-0.5 rounded-full shadow-2xs"
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                            <span>진행중</span>
+                          </span>
+                        )}
                         {badgeText && (
                           <span
                             data-testid={`item-adjustment-badge-${item.id}`}

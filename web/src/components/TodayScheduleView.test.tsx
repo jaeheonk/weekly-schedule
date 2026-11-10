@@ -493,4 +493,178 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       expect(mockOpenPraise).toHaveBeenCalledWith(satCheckable);
     });
   });
+
+  describe('Live Status Hero Card & Real-Time Active Timeline (Issue 02)', () => {
+    it('keeps hero card pinned to actual today stats/date/slogan and integrates reward exchange, send praise, and family praise banner inside the hero card even when browsing another weekday', () => {
+      // Monday Nov 9, 2026 14:40
+      store.setCurrentDate(new Date(2026, 10, 9, 14, 40, 0));
+      store.unlockParentMode();
+      const mockOpenReward = vi.fn();
+      const mockOpenPraise = vi.fn();
+
+      // Complete 1 item on actual today (Monday = 1) and verify it
+      const monCheckables = store.getItemsForWeekday(1).filter((it) => store.isItemCheckable(it));
+      store.toggleCompletion(monCheckables[0]);
+      store.toggleParentVerification(monCheckables[0]);
+      const monStats = store.getCompletionStats(1);
+
+      // Add a family praise note (+7 hearts)
+      store.sendFamilyPraise({
+        hearts: 7,
+        sticker: 'star',
+        message: '오늘도 화이팅! 엄마 아빠가 응원해 🌟',
+      });
+
+      render(
+        <TodayScheduleView
+          store={store}
+          onPlayChime={mockPlayChime}
+          onOpenRewardExchange={mockOpenReward}
+          onOpenPraiseModal={mockOpenPraise}
+        />
+      );
+
+      const heroCard = screen.getByTestId('progress-gauge-card');
+      expect(heroCard).toHaveTextContent('11월 9일 월요일');
+      expect(screen.getByTestId('progress-percentage-text')).toHaveTextContent(
+        `${monStats.percentage}%`
+      );
+      expect(screen.getByTestId('stats-completed-badge')).toHaveTextContent(
+        `다 했어요 ${monStats.completed}/${monStats.total}`
+      );
+      expect(screen.getByTestId('stats-verified-badge')).toHaveTextContent(
+        `부모확인 ${monStats.verified}/${monStats.total}`
+      );
+
+      // Reward exchange button, send praise button, and family praise banner are integrated inside heroCard
+      const exchangeBtn = screen.getByTestId('today-hero-reward-exchange-btn');
+      const sendPraiseBtn = screen.getByTestId('send-family-praise-btn');
+      const praiseBanner = screen.getByTestId('family-praise-banner');
+      expect(heroCard).toContainElement(exchangeBtn);
+      expect(heroCard).toContainElement(sendPraiseBtn);
+      expect(heroCard).toContainElement(praiseBanner);
+      expect(exchangeBtn).toHaveTextContent('7');
+      expect(praiseBanner).toHaveTextContent('오늘도 화이팅! 엄마 아빠가 응원해 🌟');
+
+      // Switch to Thursday (4) and complete a Thursday item via UI
+      fireEvent.click(screen.getByTestId('weekday-btn-4'));
+      expect(store.getSelectedWeekday()).toBe(4);
+      const thuCheckable = store.getItemsForWeekday(4).find((it) => store.isItemCheckable(it))!;
+      fireEvent.click(screen.getByTestId(`item-check-btn-${thuCheckable.id}`));
+
+      // Hero card MUST still show Monday (actual today) date, percentage, completed/verified counts, and slogan
+      expect(heroCard).toHaveTextContent('11월 9일 월요일');
+      expect(screen.getByTestId('progress-percentage-text')).toHaveTextContent(
+        `${monStats.percentage}%`
+      );
+      expect(screen.getByTestId('stats-completed-badge')).toHaveTextContent(
+        `다 했어요 ${monStats.completed}/${monStats.total}`
+      );
+      expect(screen.getByTestId('stats-verified-badge')).toHaveTextContent(
+        `부모확인 ${monStats.verified}/${monStats.total}`
+      );
+      expect(heroCard).toHaveTextContent('차근차근 멋지게 해내고 있어요! 👏');
+    });
+
+    it('displays real-time "지금 하는 일" and "다음 일정" in hero card with time range and completion status, and switches back to today and focuses the item when clicked from another weekday', () => {
+      // Monday Nov 9, 2026 at 15:20:
+      // Active item: 15:00~16:00 "Vocabulary for Reading + 100 Words"
+      // Next item:   16:00~17:00 "바이올린"
+      store.setCurrentDate(new Date(2026, 10, 9, 15, 20, 0));
+
+      const activeItem = store.getCurrentActiveItems()[0];
+      const nextItem = store.getNextUpcomingItem()!;
+      expect(activeItem.title).toBe('Vocabulary for Reading + 100 Words');
+      expect(nextItem.title).toBe('바이올린');
+
+      // Mark active item as completed by child
+      store.toggleCompletion(activeItem);
+
+      render(<TodayScheduleView store={store} onPlayChime={mockPlayChime} />);
+
+      const heroCard = screen.getByTestId('progress-gauge-card');
+      const activeRow = screen.getByTestId('hero-current-active-item');
+      const nextRow = screen.getByTestId('hero-next-upcoming-item');
+
+      expect(heroCard).toContainElement(activeRow);
+      expect(heroCard).toContainElement(nextRow);
+
+      // Verify "지금 하는 일" content: label, title, time range (오후 3시 ~ 오후 4시), and completion status
+      expect(activeRow).toHaveTextContent('지금 하는 일');
+      expect(activeRow).toHaveTextContent('Vocabulary for Reading + 100 Words');
+      expect(activeRow).toHaveTextContent('오후 3시 ~ 오후 4시');
+      expect(activeRow).toHaveTextContent('다 했어요 완료');
+
+      // Verify "다음 일정" content: label, title, time range (오후 4시 ~ 오후 5시)
+      expect(nextRow).toHaveTextContent('다음 일정');
+      expect(nextRow).toHaveTextContent('바이올린');
+      expect(nextRow).toHaveTextContent('오후 4시 ~ 오후 5시');
+
+      // Switch to Friday (5)
+      fireEvent.click(screen.getByTestId('weekday-btn-5'));
+      expect(store.getSelectedWeekday()).toBe(5);
+      expect(screen.queryByTestId(`schedule-card-${activeItem.id}`)).not.toBeInTheDocument();
+
+      // Hero card still shows Monday's active and next items while viewing Friday
+      expect(screen.getByTestId('hero-current-active-item')).toHaveTextContent(
+        'Vocabulary for Reading + 100 Words'
+      );
+      expect(screen.getByTestId('hero-next-upcoming-item')).toHaveTextContent('바이올린');
+
+      // Click "지금 하는 일" in hero card while viewing Friday -> switches to Monday (1) and focuses activeItem card
+      fireEvent.click(screen.getByTestId('hero-current-active-item'));
+      expect(store.getSelectedWeekday()).toBe(1);
+      const activeCard = screen.getByTestId(`schedule-card-${activeItem.id}`);
+      expect(activeCard).toBeInTheDocument();
+      expect(activeCard).toHaveAttribute('data-focused', 'true');
+      expect(document.activeElement).toBe(activeCard);
+
+      // Switch to Wednesday (3), then click "다음 일정" in hero card -> switches to Monday (1) and focuses nextItem card
+      fireEvent.click(screen.getByTestId('weekday-btn-3'));
+      expect(store.getSelectedWeekday()).toBe(3);
+
+      fireEvent.click(screen.getByTestId('hero-next-upcoming-item'));
+      expect(store.getSelectedWeekday()).toBe(1);
+      const nextCard = screen.getByTestId(`schedule-card-${nextItem.id}`);
+      expect(nextCard).toBeInTheDocument();
+      expect(nextCard).toHaveAttribute('data-focused', 'true');
+      expect(document.activeElement).toBe(nextCard);
+    });
+
+    it('renders live "진행중" badge and active highlight border on timeline cards only when selectedWeekday === todayWeekday and within the item time range', () => {
+      // Monday Nov 9, 2026 at 15:20
+      store.setCurrentDate(new Date(2026, 10, 9, 15, 20, 0));
+
+      const monActiveItem = store.getCurrentActiveItems()[0];
+      const monInactiveItem = store.getNextUpcomingItem()!;
+      const tueSameTimeItem = store
+        .getItemsForWeekday(2)
+        .find((it) => it.startHour === 15 && it.endHour === 16)!;
+
+      render(<TodayScheduleView store={store} onPlayChime={mockPlayChime} />);
+
+      // Viewing actual today (Monday = 1):
+      const activeCard = screen.getByTestId(`schedule-card-${monActiveItem.id}`);
+      expect(activeCard).toHaveAttribute('data-active', 'true');
+      expect(activeCard.className).toContain('ring-2');
+      const activeBadge = screen.getByTestId(`item-active-badge-${monActiveItem.id}`);
+      expect(activeBadge).toBeInTheDocument();
+      expect(activeBadge).toHaveTextContent('진행중');
+
+      // Non-active item on Monday does NOT have "진행중" badge or active highlight
+      const inactiveCard = screen.getByTestId(`schedule-card-${monInactiveItem.id}`);
+      expect(inactiveCard).toHaveAttribute('data-active', 'false');
+      expect(screen.queryByTestId(`item-active-badge-${monInactiveItem.id}`)).not.toBeInTheDocument();
+
+      // Switch to Tuesday (2) which also has a 15:00~16:00 item:
+      fireEvent.click(screen.getByTestId('weekday-btn-2'));
+      expect(store.getSelectedWeekday()).toBe(2);
+
+      const tueCard = screen.getByTestId(`schedule-card-${tueSameTimeItem.id}`);
+      expect(tueCard).toHaveAttribute('data-active', 'false');
+      expect(tueCard.className).not.toContain('ring-2');
+      expect(screen.queryByTestId(`item-active-badge-${tueSameTimeItem.id}`)).not.toBeInTheDocument();
+      expect(screen.queryByText('진행중')).not.toBeInTheDocument();
+    });
+  });
 });

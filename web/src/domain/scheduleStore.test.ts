@@ -1202,5 +1202,40 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       );
       expect(store.getAdjustmentCountForWeekday(2)).toBe(2);
     });
+
+    it('computes getCurrentActiveItems, getNextUpcomingItem, and isCurrentlyActive strictly for todayWeekday within [start, end)', () => {
+      // Monday Nov 9, 2026 at exactly 15:00 (boundary between 14:30~15:00 and 15:00~16:00)
+      const mondayAt1500 = new Date(2026, 10, 9, 15, 0, 0);
+      const store = new ScheduleStore({ currentDate: mondayAt1500 });
+
+      const activeItems = store.getCurrentActiveItems();
+      expect(activeItems).toHaveLength(1);
+      expect(activeItems[0].title).toBe('Vocabulary for Reading + 100 Words');
+      expect(store.isCurrentlyActive(activeItems[0])).toBe(true);
+
+      // 14:30~15:00 item has ended at 15:00 ([start, end) half-open interval)
+      const endedItem = store
+        .getItemsForWeekday(1)
+        .find((it) => it.startHour === 14 && it.startMinute === 30)!;
+      expect(store.isCurrentlyActive(endedItem)).toBe(false);
+
+      // Next upcoming item is 16:00~17:00 바이올린
+      const nextItem = store.getNextUpcomingItem();
+      expect(nextItem).not.toBeNull();
+      expect(nextItem?.title).toBe('바이올린');
+      expect(nextItem?.startHour).toBe(16);
+
+      // Tuesday item with the same 15:00~16:00 window is NOT active on Monday
+      const tuesdaySameTimeItem = store
+        .getItemsForWeekday(2)
+        .find((it) => it.startHour === 15 && it.endHour === 16)!;
+      expect(tuesdaySameTimeItem).toBeDefined();
+      expect(store.isCurrentlyActive(tuesdaySameTimeItem)).toBe(false);
+
+      // Late night (23:15): no active items and no upcoming items
+      store.setCurrentDate(new Date(2026, 10, 9, 23, 15, 0));
+      expect(store.getCurrentActiveItems()).toHaveLength(0);
+      expect(store.getNextUpcomingItem()).toBeNull();
+    });
   });
 });

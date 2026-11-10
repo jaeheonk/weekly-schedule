@@ -2033,15 +2033,18 @@ export class ScheduleStore {
   }
 
   public setCurrentDate(date: Date): void {
-    const didRollover = this.refreshDateAndDayChange(date);
-    if (!didRollover) {
-      this.notify();
-    }
+    this.applyDateUpdate(date, true);
   }
 
   public refreshDateAndDayChange(now: Date = new Date()): boolean {
+    return this.applyDateUpdate(now, false);
+  }
+
+  private applyDateUpdate(now: Date, forceNotify: boolean): boolean {
     const nextDateKey = this.formatLocalDateKey(now);
     const dayChanged = nextDateKey !== this.lastObservedDateKey;
+    const prevMinutes = this.minutesOfDay(this.currentDate);
+    const nextMinutes = this.minutesOfDay(now);
     this.currentDate = now;
     if (dayChanged) {
       this.lastObservedDateKey = nextDateKey;
@@ -2049,7 +2052,55 @@ export class ScheduleStore {
       this.notify();
       return true;
     }
+    if (forceNotify || prevMinutes !== nextMinutes) {
+      this.notify();
+    }
     return false;
+  }
+
+  private minutesOfDay(date: Date): number {
+    return date.getHours() * 60 + date.getMinutes();
+  }
+
+  private itemStartMinutes(item: ScheduleItem): number {
+    return item.startHour * 60 + item.startMinute;
+  }
+
+  private itemEndMinutes(item: ScheduleItem): number {
+    return item.endHour * 60 + item.endMinute;
+  }
+
+  public getCurrentMinutesOfDay(): number {
+    return this.minutesOfDay(this.currentDate);
+  }
+
+  public isCurrentlyActive(item: ScheduleItem, weekKey?: WeekKey): boolean {
+    if (item.weekday !== this.getTodayWeekday()) {
+      return false;
+    }
+    if (weekKey && weekKey !== this.getCurrentWeekKey()) {
+      return false;
+    }
+    const curMin = this.getCurrentMinutesOfDay();
+    return curMin >= this.itemStartMinutes(item) && curMin < this.itemEndMinutes(item);
+  }
+
+  public getCurrentActiveItems(weekKey?: WeekKey): ScheduleItem[] {
+    return this.getTodayItems(weekKey).filter((item) => this.isCurrentlyActive(item, weekKey));
+  }
+
+  public getNextUpcomingItem(weekKey?: WeekKey): ScheduleItem | null {
+    const curMin = this.getCurrentMinutesOfDay();
+    const todayItems = this.getTodayItems(weekKey);
+    return todayItems.find((item) => this.itemStartMinutes(item) > curMin) || null;
+  }
+
+  public getRemainingMinutesForActive(item: ScheduleItem): number {
+    return Math.max(0, this.itemEndMinutes(item) - this.getCurrentMinutesOfDay());
+  }
+
+  public getMinutesUntilStart(item: ScheduleItem): number {
+    return Math.max(0, this.itemStartMinutes(item) - this.getCurrentMinutesOfDay());
   }
 
   public getCurrentWeekKey(): WeekKey {
