@@ -12,6 +12,7 @@ import {
 import { ScheduleStore } from '../domain/scheduleStore';
 import { RewardPreset, DEFAULT_REWARD_PRESETS } from '../types/snapshot';
 import { playCompletionChime } from '../services/soundEffects';
+import { ParentPinModal } from './ParentPinModal';
 
 export interface RewardExchangeModalProps {
   isOpen: boolean;
@@ -32,6 +33,7 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
 
   const [customTitle, setCustomTitle] = useState<string>('');
   const [heartsToSpend, setHeartsToSpend] = useState<number>(10);
+  const [isPinModalOpen, setIsPinModalOpen] = useState<boolean>(false);
 
   // Initialize form with the first preset when opened
   useEffect(() => {
@@ -77,7 +79,7 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
   };
 
   const handleStepPlus = () => {
-    if (heartsToSpend < availableHearts || availableHearts === 0) {
+    if (availableHearts > 0 && heartsToSpend < availableHearts) {
       setHeartsToSpend((prev) => prev + 1);
     }
   };
@@ -86,10 +88,7 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
     setHeartsToSpend(count);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canRedeem) return;
-
+  const executeRedemption = () => {
     const success = store.redeemReward(effectiveTitle, heartsToSpend);
     if (success) {
       playCompletionChime();
@@ -97,7 +96,19 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
     }
   };
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canRedeem) return;
+
+    if (isParentMode) {
+      executeRedemption();
+    } else {
+      setIsPinModalOpen(true);
+    }
+  };
+
   const remainingAfterExchange = Math.max(0, availableHearts - heartsToSpend);
+  const maxSelectable = Math.max(1, availableHearts);
 
   return (
     <div
@@ -291,7 +302,7 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
                 </span>
               </div>
 
-              {/* Stepper */}
+              {/* Stepper with Direct Number Input */}
               <div className="flex items-center gap-3">
                 <button
                   type="button"
@@ -304,15 +315,23 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
                   <MinusCircle className="w-6 h-6" />
                 </button>
 
-                <div className="flex-1 text-center py-2 bg-white rounded-xl border border-slate-200 text-base font-extrabold text-slate-800">
-                  {heartsToSpend}개
+                <div className="flex-1 flex items-center justify-center bg-white rounded-xl border border-slate-200 px-3 py-1.5 focus-within:ring-2 focus-within:ring-pink-400 focus-within:border-transparent transition-all">
+                  <input
+                    type="number"
+                    data-testid="hearts-number-input"
+                    aria-label="차감할 하트 수"
+                    value={heartsToSpend}
+                    onChange={(e) => setHeartsToSpend(Number(e.target.value))}
+                    className="w-16 text-center text-base font-extrabold text-slate-800 bg-transparent focus:outline-hidden [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  />
+                  <span className="text-sm font-bold text-slate-600 ml-1">개</span>
                 </div>
 
                 <button
                   type="button"
                   data-testid="stepper-plus-btn"
                   onClick={handleStepPlus}
-                  disabled={heartsToSpend >= availableHearts && availableHearts > 0}
+                  disabled={availableHearts <= 0 || heartsToSpend >= availableHearts}
                   className="p-1 rounded-full text-slate-400 hover:text-pink-600 disabled:opacity-30 disabled:pointer-events-none transition-colors"
                   aria-label="1개 증가"
                 >
@@ -320,8 +339,28 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
                 </button>
               </div>
 
-              {/* Quick Chips */}
-              <div className="flex items-center gap-1.5 sm:gap-2 mt-2.5">
+              {/* Continuous Range Slider */}
+              <div className="mt-3 px-1">
+                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 mb-1">
+                  <span>1개</span>
+                  <span>최대 {maxSelectable}개</span>
+                </div>
+                <input
+                  type="range"
+                  data-testid="heart-range-slider"
+                  aria-label="하트 수량 슬라이더"
+                  min={1}
+                  max={maxSelectable}
+                  step={1}
+                  value={Math.min(Math.max(1, heartsToSpend), maxSelectable)}
+                  onChange={(e) => setHeartsToSpend(Number(e.target.value))}
+                  disabled={availableHearts <= 0}
+                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-pink-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                />
+              </div>
+
+              {/* Quick Chips & All-in */}
+              <div className="flex items-center gap-1.5 sm:gap-2 mt-2.5 flex-wrap">
                 {[5, 10, 15, 20].map((count) => {
                   const isSelected = heartsToSpend === count;
                   return (
@@ -330,7 +369,7 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
                       type="button"
                       data-testid={`quick-chip-${count}`}
                       onClick={() => handleQuickChip(count)}
-                      className={`flex-1 py-1.5 px-2 rounded-full text-xs font-bold transition-all ${
+                      className={`flex-1 py-1.5 px-2 rounded-full text-xs font-bold transition-all min-w-[48px] ${
                         isSelected
                           ? 'bg-pink-500 text-white shadow-xs'
                           : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
@@ -340,15 +379,28 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
                     </button>
                   );
                 })}
+                <button
+                  type="button"
+                  data-testid="quick-chip-all-in"
+                  onClick={() => setHeartsToSpend(availableHearts)}
+                  disabled={availableHearts <= 0}
+                  className={`py-1.5 px-3 rounded-full text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                    heartsToSpend === availableHearts && availableHearts > 0
+                      ? 'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-xs'
+                      : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                  }`}
+                >
+                  전액(All-in)
+                </button>
               </div>
 
-              {/* Remaining preview & Warning */}
+              {/* Remaining preview & Overdraft Warning */}
               <div className="mt-3 pt-2.5 border-t border-slate-200 flex items-center justify-between text-xs">
                 <span className="text-slate-500 font-medium">교환 후 잔여 하트</span>
                 <span
                   data-testid="remaining-hearts-preview"
                   className={`font-bold ${
-                    availableHearts >= heartsToSpend
+                    availableHearts >= heartsToSpend && heartsToSpend > 0
                       ? 'text-slate-700'
                       : 'text-rose-600'
                   }`}
@@ -357,14 +409,21 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
                 </span>
               </div>
 
-              {availableHearts < heartsToSpend && (
+              {heartsToSpend <= 0 ? (
                 <div
                   data-testid="overdraft-warning"
-                  className="mt-1 text-xs font-bold text-rose-600"
+                  className="mt-1.5 text-xs font-bold text-rose-600 flex items-center gap-1"
                 >
-                  ⚠️ 보유 하트({availableHearts}개)가 부족합니다.
+                  ⚠️ 차감할 하트 수는 최소 1개 이상이어야 합니다.
                 </div>
-              )}
+              ) : availableHearts < heartsToSpend ? (
+                <div
+                  data-testid="overdraft-warning"
+                  className="mt-1.5 text-xs font-bold text-rose-600 flex items-center gap-1"
+                >
+                  ⚠️ 보유 하트({availableHearts}개)보다 {heartsToSpend - availableHearts}개 초과되었습니다. (부족합니다)
+                </div>
+              ) : null}
             </div>
 
             {/* Submit Action Button */}
@@ -390,6 +449,18 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
           </form>
         </div>
       </div>
+
+      {/* 6-Digit Master PIN Modal for Child Mode Authorization */}
+      <ParentPinModal
+        isOpen={isPinModalOpen}
+        onClose={() => setIsPinModalOpen(false)}
+        onSuccess={() => {
+          setIsPinModalOpen(false);
+          executeRedemption();
+        }}
+        reason="보상 교환 승인"
+        store={store}
+      />
     </div>
   );
 };

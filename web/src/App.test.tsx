@@ -395,9 +395,19 @@ describe('App & Hash Navigation (Seam 2)', () => {
         const presetCard = screen.getByTestId('preset-card-00000000-0000-0000-0000-000000000101');
         fireEvent.click(presetCard);
 
-        // Click redeem submit button
+        // Click redeem submit button in child mode -> opens PIN modal
         const submitBtn = screen.getByTestId('redeem-submit-btn');
         fireEvent.click(submitBtn);
+
+        const pinModal = screen.getByTestId('parent-pin-modal');
+        expect(pinModal).toBeInTheDocument();
+        expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('보상 교환 승인');
+
+        // Enter correct 6-digit PIN: 160125
+        const pin = ['1', '6', '0', '1', '2', '5'];
+        for (const digit of pin) {
+          fireEvent.click(screen.getByTestId(`keypad-btn-${digit}`));
+        }
 
         // Modal should close
         await waitFor(() => {
@@ -411,6 +421,35 @@ describe('App & Hash Navigation (Seam 2)', () => {
         const toast = await screen.findByTestId('sync-toast');
         expect(toast).toHaveTextContent('자유 놀이 / 게임 30분');
         expect(toast).toHaveTextContent('하트 10개가 차감되었어요');
+      });
+
+      it('in parent mode, redeems reward immediately without requiring PIN in App', async () => {
+        globalScheduleStore.setCurrentDate(new Date(2026, 10, 9));
+        globalScheduleStore.unlockParentMode();
+        globalScheduleStore.sendFamilyPraise({
+          hearts: 20,
+          sticker: 'heart',
+          message: '수고했어!',
+        });
+
+        render(<App syncOnMount={false} />);
+
+        // Click header badge to open modal
+        fireEvent.click(screen.getByTestId('header-hearts-badge'));
+
+        // Select preset #1
+        fireEvent.click(screen.getByTestId('preset-card-00000000-0000-0000-0000-000000000101'));
+
+        // Click redeem submit button
+        fireEvent.click(screen.getByTestId('redeem-submit-btn'));
+
+        // No PIN modal appears, reward exchange modal closes immediately
+        expect(screen.queryByTestId('parent-pin-modal')).not.toBeInTheDocument();
+        await waitFor(() => {
+          expect(screen.queryByTestId('reward-exchange-modal')).not.toBeInTheDocument();
+        });
+
+        expect(screen.getByTestId('header-hearts-badge')).toHaveTextContent('10');
       });
     });
   });

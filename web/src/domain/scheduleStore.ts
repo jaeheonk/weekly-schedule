@@ -393,6 +393,8 @@ export class ScheduleStore {
   }
 
   private loadDeviceRole(): void {
+    this.deviceRole = 'child';
+    this.isParentModeUnlocked = false;
     try {
       const stored = localStorage.getItem(STORAGE_KEYS.DEVICE_ROLE);
       if (stored === 'parent' || stored === 'child') {

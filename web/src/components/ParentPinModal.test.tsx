@@ -137,4 +137,19 @@ describe('ParentPinModal (Seam 2)', () => {
     );
     expect(container.firstChild).toBeNull();
   });
+
+  it('renders custom reason and description when reason prop is provided', () => {
+    render(
+      <ParentPinModal
+        isOpen={true}
+        onClose={handleClose}
+        onSuccess={handleSuccess}
+        store={store}
+        reason="보상 교환 승인"
+      />
+    );
+
+    expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('보상 교환 승인');
+    expect(screen.getByText(/보상 교환 승인을 위해/)).toBeInTheDocument();
+  });
 });

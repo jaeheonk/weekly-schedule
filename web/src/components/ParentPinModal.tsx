@@ -7,6 +7,7 @@ export interface ParentPinModalProps {
   onClose: () => void;
   onSuccess: () => void;
   store?: ScheduleStore;
+  reason?: string;
 }
 
 export const ParentPinModal: React.FC<ParentPinModalProps> = ({
@@ -14,6 +15,7 @@ export const ParentPinModal: React.FC<ParentPinModalProps> = ({
   onClose,
   onSuccess,
   store = globalScheduleStore,
+  reason,
 }) => {
   const [digits, setDigits] = useState<string>('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -145,13 +147,23 @@ export const ParentPinModal: React.FC<ParentPinModalProps> = ({
         </div>
 
         {/* Title & Description */}
+        {reason && (
+          <div
+            data-testid="pin-reason-badge"
+            className="mb-2 px-3 py-1 rounded-full bg-indigo-50 border border-indigo-200/80 text-indigo-700 text-xs font-bold shadow-xs animate-in fade-in"
+          >
+            {reason}
+          </div>
+        )}
         <h2 className="text-xl font-black text-slate-900 tracking-tight text-center">
           {isLockedOut ? '비밀번호 입력 일시 잠금' : '부모님 6자리 마스터 PIN 입력'}
         </h2>
         <p className="text-xs text-slate-500 text-center mt-1.5 px-3">
           {isLockedOut
             ? '보안을 위해 PIN 입력이 일시 중단되었습니다.'
-            : '부모 모드로 전환하여 숙제 확인 도장을 찍고 응원 하트를 보냅니다.'}
+            : (reason
+                ? `${reason}을 위해 부모님 6자리 마스터 PIN을 입력해 주세요.`
+                : '부모 모드로 전환하여 숙제 확인 도장을 찍고 응원 하트를 보냅니다.')}
         </p>
 
         {/* Lockout View or PIN Keypad View */}
