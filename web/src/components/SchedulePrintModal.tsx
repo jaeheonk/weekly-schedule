@@ -10,7 +10,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
-import { ScheduleItem, WEEKDAYS, CATEGORIES } from '../types/schedule';
+import { ScheduleItem, WEEKDAYS, CATEGORIES, ScheduleEditScope } from '../types/schedule';
 import {
   PrintConfig,
   getPrintableTimeSlots,
@@ -23,16 +23,18 @@ import {
 export interface SchedulePrintModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialScope?: ScheduleEditScope;
   store?: ScheduleStore;
 }
 
 export const SchedulePrintModal: React.FC<SchedulePrintModalProps> = ({
   isOpen,
   onClose,
+  initialScope,
   store = globalScheduleStore,
 }) => {
   const [config, setConfig] = useState<PrintConfig>({
-    scope: 'master',
+    scope: initialScope || 'master',
     theme: 'classicMint',
     documentTitle: 'WEEKLY SCHEDULE | 주간 시간표',
     showCompletionStamps: false,
@@ -41,6 +43,12 @@ export const SchedulePrintModal: React.FC<SchedulePrintModalProps> = ({
   });
 
   const [, setRenderVersion] = useState(0);
+
+  useEffect(() => {
+    if (isOpen && initialScope) {
+      setConfig((prev) => ({ ...prev, scope: initialScope }));
+    }
+  }, [isOpen, initialScope]);
 
   useEffect(() => {
     const unsubscribe = store.subscribe(() => {
@@ -388,6 +396,7 @@ export const SchedulePrintModal: React.FC<SchedulePrintModalProps> = ({
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
+                  data-testid="print-scope-master-btn"
                   onClick={() => setConfig((prev) => ({ ...prev, scope: 'master' }))}
                   className={`py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
                     config.scope === 'master'
@@ -400,6 +409,7 @@ export const SchedulePrintModal: React.FC<SchedulePrintModalProps> = ({
 
                 <button
                   type="button"
+                  data-testid="print-scope-thisweek-btn"
                   onClick={() => setConfig((prev) => ({ ...prev, scope: 'thisWeek' }))}
                   className={`py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
                     config.scope === 'thisWeek'

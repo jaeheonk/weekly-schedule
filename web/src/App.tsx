@@ -31,6 +31,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
 
   const [activeTab, setActiveTab] = useState<'today' | 'weekly' | 'stars'>(getTabFromHash);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState<boolean>(isPrintHash);
+  const [printScope, setPrintScope] = useState<ScheduleEditScope>('master');
   const [items, setItems] = useState<ScheduleItem[]>(() => globalScheduleStore.getItems());
   const [isParentMode, setIsParentMode] = useState<boolean>(() =>
     globalScheduleStore.isParentMode()
@@ -112,7 +113,10 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
-  const handleOpenPrint = () => {
+  const handleOpenPrint = (scope?: ScheduleEditScope) => {
+    if (scope) {
+      setPrintScope(scope);
+    }
     window.location.hash = '#print';
     setIsPrintModalOpen(true);
   };
@@ -235,7 +239,6 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
           />
         ) : (
           <WeeklyGridView
-            items={items}
             currentWeekday={currentWeekday}
             store={globalScheduleStore}
             onOpenEditModal={handleOpenEditModal}
@@ -296,6 +299,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
       <SchedulePrintModal
         isOpen={isPrintModalOpen}
         onClose={handleClosePrint}
+        initialScope={printScope}
         store={globalScheduleStore}
       />
 

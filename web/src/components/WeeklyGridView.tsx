@@ -1,6 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit3, RotateCcw, AlertTriangle, Printer } from 'lucide-react';
-import { ScheduleItem, WEEKDAYS, WeekdayNumber } from '../types/schedule';
+import {
+  Plus,
+  Edit3,
+  RotateCcw,
+  AlertTriangle,
+  Printer,
+  Calendar,
+  Sparkles,
+  Info,
+  Clock,
+} from 'lucide-react';
+import {
+  ScheduleItem,
+  WEEKDAYS,
+  WeekdayNumber,
+  ScheduleEditScope,
+} from '../types/schedule';
 import { CATEGORIES } from '../types/schedule';
 import { formatTime, compareScheduleItemsByTime } from '../domain/calendarUtils';
 import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
@@ -8,19 +23,26 @@ import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
 export interface WeeklyGridViewProps {
   items?: ScheduleItem[];
   currentWeekday: WeekdayNumber;
+  initialScope?: ScheduleEditScope;
   store?: ScheduleStore;
-  onOpenEditModal?: (item: ScheduleItem | null, weekday?: WeekdayNumber) => void;
-  onOpenPrint?: () => void;
+  onOpenEditModal?: (
+    item: ScheduleItem | null,
+    weekday?: WeekdayNumber,
+    scope?: ScheduleEditScope
+  ) => void;
+  onOpenPrint?: (scope?: ScheduleEditScope) => void;
 }
 
 export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
   items: propsItems,
   currentWeekday,
+  initialScope = 'thisWeek',
   store = globalScheduleStore,
   onOpenEditModal,
   onOpenPrint,
 }) => {
   const [, setRenderVersion] = useState(0);
+  const [weeklyScope, setWeeklyScope] = useState<ScheduleEditScope>(initialScope);
 
   useEffect(() => {
     const unsubscribe = store.subscribe(() => {
@@ -29,7 +51,9 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
     return unsubscribe;
   }, [store]);
 
-  const items = propsItems || store.getEffectiveItems();
+  const items =
+    propsItems ||
+    (weeklyScope === 'master' ? store.getMasterItems() : store.getEffectiveItems());
   const isParentMode = store.isParentMode();
   const adjustmentCount = store.getCurrentWeekAdjustmentCount();
 
@@ -53,7 +77,7 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
             <button
               type="button"
               data-testid="weekly-print-btn"
-              onClick={onOpenPrint}
+              onClick={() => onOpenPrint(weeklyScope)}
               className="flex items-center gap-1.5 px-3 py-2 rounded-2xl bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs border border-slate-200 shadow-2xs transition-all active:scale-95"
             >
               <Printer className="w-3.5 h-3.5 text-slate-500" />
@@ -65,7 +89,7 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
             <button
               type="button"
               data-testid="weekly-add-item-btn"
-              onClick={() => onOpenEditModal(null, currentWeekday)}
+              onClick={() => onOpenEditModal(null, currentWeekday, weeklyScope)}
               className="flex items-center gap-1.5 px-4 py-2 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 transition-all active:scale-95"
             >
               <Plus className="w-4 h-4" />
@@ -75,37 +99,96 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
         </div>
       </div>
 
-      {/* Weekly Adjustments Banner (if adjustments exist) */}
-      {adjustmentCount > 0 && (
+      {/* Scope Mode Switch Bar (Master Schedule vs Effective Schedule) */}
+      <div className="space-y-2">
+        <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 rounded-2xl">
+          <button
+            type="button"
+            data-testid="weekly-scope-master-btn"
+            onClick={() => setWeeklyScope('master')}
+            className={`flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl text-xs font-bold transition-all ${
+              weeklyScope === 'master'
+                ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-500/20'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Calendar className="w-3.5 h-3.5" />
+            <span>전체 기본 시간표 (매주 변경)</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="weekly-scope-thisweek-btn"
+            onClick={() => setWeeklyScope('thisWeek')}
+            className={`flex items-center justify-center gap-1.5 py-2.5 px-4 rounded-xl text-xs font-bold transition-all ${
+              weeklyScope === 'thisWeek'
+                ? 'bg-amber-600 text-white shadow-sm shadow-amber-500/20'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>
+              {adjustmentCount > 0
+                ? `이번 주 시간표 (조정 ${adjustmentCount}건)`
+                : '이번 주 적용 시간표'}
+            </span>
+          </button>
+        </div>
+
+        {/* Sub-banner with scope explanation and adjustment controls */}
         <div
-          data-testid="weekly-adjustments-banner"
-          className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-amber-900 animate-in fade-in"
+          data-testid="weekly-scope-subbanner"
+          className={`rounded-2xl p-3 border flex flex-wrap items-center justify-between gap-3 text-xs transition-all ${
+            weeklyScope === 'master'
+              ? 'bg-indigo-50/70 border-indigo-200 text-indigo-900'
+              : 'bg-amber-50/70 border-amber-200 text-amber-900'
+          }`}
         >
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-xl bg-amber-200/80 text-amber-800 flex items-center justify-center shrink-0">
-              <AlertTriangle className="w-4 h-4" />
+            <div
+              className={`w-6 h-6 rounded-lg flex items-center justify-center shrink-0 ${
+                weeklyScope === 'master'
+                  ? 'bg-indigo-200/80 text-indigo-800'
+                  : 'bg-amber-200/80 text-amber-800'
+              }`}
+            >
+              {weeklyScope === 'master' ? (
+                <Info className="w-3.5 h-3.5" />
+              ) : (
+                <Sparkles className="w-3.5 h-3.5" />
+              )}
             </div>
-            <div className="text-xs">
-              <span className="font-bold">이번 주 조정 {adjustmentCount}건</span>
-              <span className="text-amber-700 ml-1.5 hidden sm:inline">
-                (시간 이동, 요일 변경, 휴강 등은 다음 주가 되면 자동으로 원래 기본 시간표로 복구됩니다)
+            <div>
+              <span className="font-semibold">
+                {weeklyScope === 'master'
+                  ? '칸을 탭하면 매주 반복되는 전체 기본 스케줄이 영구적으로 변경됩니다.'
+                  : '이번 주에만 일시 조정된 시간표입니다. (다음 주 월요일 원래대로 자동 복구)'}
               </span>
+              {adjustmentCount > 0 && (
+                <span
+                  data-testid="weekly-adjustments-banner"
+                  className="ml-2 font-bold inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-amber-200/70 text-amber-900"
+                >
+                  <AlertTriangle className="w-3 h-3 text-amber-700 inline" />
+                  <span>이번 주 조정 {adjustmentCount}건</span>
+                </span>
+              )}
             </div>
           </div>
 
-          {isParentMode && (
+          {isParentMode && adjustmentCount > 0 && (
             <button
               type="button"
               data-testid="reset-weekly-adjustments-btn"
               onClick={handleResetAdjustments}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white text-amber-800 hover:bg-amber-100/80 font-bold text-xs border border-amber-300 shadow-2xs transition-all"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white text-amber-800 hover:bg-amber-100/80 font-bold text-xs border border-amber-300 shadow-2xs transition-all active:scale-95 ml-auto"
             >
               <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
-              <span>이번 주 조정 모두 되돌리기</span>
+              <span>이번주 조정 초기화</span>
             </button>
           )}
         </div>
-      )}
+      </div>
 
       {/* 7-Day Grid */}
       <div className="overflow-x-auto pb-4">
@@ -115,7 +198,10 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
             const dayItems = items
               .filter((item) => item.weekday === weekday.number)
               .sort(compareScheduleItemsByTime);
-            const excludedDayItems = store.getExcludedMasterItemsForThisWeek(weekday.number);
+            const excludedDayItems =
+              weeklyScope === 'master'
+                ? []
+                : store.getExcludedMasterItemsForThisWeek(weekday.number);
 
             return (
               <div
@@ -153,7 +239,7 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
                       <button
                         type="button"
                         data-testid={`weekly-add-day-btn-${weekday.number}`}
-                        onClick={() => onOpenEditModal(null, weekday.number)}
+                        onClick={() => onOpenEditModal(null, weekday.number, weeklyScope)}
                         className={`text-[10px] font-bold px-1.5 py-0.5 rounded transition-colors ${
                           isToday
                             ? 'bg-white/20 hover:bg-white/30 text-white'
@@ -191,17 +277,43 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
                           : `${durationMin}분`;
 
                       const cardMinHeight = Math.min(130, Math.max(56, Math.round(durationMin * 0.95)));
-                      const badgeText = store.adjustmentBadgeText(item);
+
+                      const isSkippedInThisWeek =
+                        weeklyScope === 'master' && store.isSkippedThisWeek(item.id);
+                      const hasThisWeekMod =
+                        weeklyScope === 'master' &&
+                        !isSkippedInThisWeek &&
+                        store.hasThisWeekOverride(item.id);
+
+                      const badgeText =
+                        weeklyScope === 'master'
+                          ? isSkippedInThisWeek
+                            ? '이번 주 휴강'
+                            : hasThisWeekMod
+                            ? '이번 주 조정됨'
+                            : null
+                          : store.adjustmentBadgeText(item);
 
                       return (
                         <div
                           key={item.id}
-                          className="rounded-xl p-2.5 text-left border shadow-2xs transition-all hover:-translate-y-0.5 flex flex-col justify-between group relative"
+                          onClick={() => {
+                            if (isParentMode && onOpenEditModal) {
+                              onOpenEditModal(item, item.weekday, weeklyScope);
+                            }
+                          }}
+                          className={`rounded-xl p-2.5 text-left border shadow-2xs transition-all hover:-translate-y-0.5 flex flex-col justify-between group relative ${
+                            isParentMode && onOpenEditModal ? 'cursor-pointer' : ''
+                          } ${isSkippedInThisWeek ? 'opacity-70 bg-slate-50' : ''}`}
                           style={{
-                            backgroundColor: cat.softBackgroundColor,
-                            borderColor: `${cat.color}45`,
+                            backgroundColor: isSkippedInThisWeek
+                              ? undefined
+                              : cat.softBackgroundColor,
+                            borderColor: hasThisWeekMod
+                              ? '#f59e0b'
+                              : `${cat.color}45`,
                             borderLeftWidth: '4px',
-                            borderLeftColor: cat.color,
+                            borderLeftColor: hasThisWeekMod ? '#f59e0b' : cat.color,
                             minHeight: `${cardMinHeight}px`,
                           }}
                         >
@@ -212,13 +324,26 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
                                 data-testid={`weekly-adjustment-badge-${item.id}`}
                                 className="mb-1.5 px-1.5 py-0.5 rounded bg-amber-500 text-white text-[9px] font-extrabold tracking-tight flex items-center gap-1 shadow-2xs"
                               >
-                                <span>⚡</span>
+                                {weeklyScope === 'master' ? (
+                                  isSkippedInThisWeek ? (
+                                    <span>⏭️</span>
+                                  ) : (
+                                    <Clock className="w-2.5 h-2.5" />
+                                  )
+                                ) : (
+                                  <span>⚡</span>
+                                )}
                                 <span className="truncate">{badgeText}</span>
                               </div>
                             )}
 
                             <div className="flex items-center justify-between text-[10px] font-semibold mb-1">
-                              <span style={{ color: cat.color }}>{cat.title}</span>
+                              <span
+                                style={{ color: isSkippedInThisWeek ? '#94a3b8' : cat.color }}
+                                className={isSkippedInThisWeek ? 'line-through' : ''}
+                              >
+                                {cat.title}
+                              </span>
                               <div className="flex items-center gap-1">
                                 <span className="text-slate-500 font-mono text-[9px] bg-white/70 px-1 py-0.2 rounded">
                                   {durationText}
@@ -227,7 +352,10 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
                                   <button
                                     type="button"
                                     data-testid={`weekly-edit-item-btn-${item.id}`}
-                                    onClick={() => onOpenEditModal(item, item.weekday)}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onOpenEditModal(item, item.weekday, weeklyScope);
+                                    }}
                                     className="p-1 rounded hover:bg-black/10 text-slate-500 hover:text-slate-800 transition-colors"
                                     title="시간표 편집 및 조정"
                                   >
@@ -236,7 +364,13 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
                                 )}
                               </div>
                             </div>
-                            <div className="font-bold text-xs text-slate-900 leading-tight">
+                            <div
+                              className={`font-bold text-xs leading-tight ${
+                                isSkippedInThisWeek
+                                  ? 'text-slate-400 line-through'
+                                  : 'text-slate-900'
+                              }`}
+                            >
                               {item.title}
                             </div>
                           </div>
@@ -267,7 +401,14 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
                       <div
                         key={`skipped-${item.id}`}
                         data-testid={`weekly-skipped-card-${item.id}`}
-                        className="rounded-xl p-2.5 text-left border border-dashed border-slate-300 bg-slate-100/80 shadow-2xs flex flex-col justify-between opacity-80"
+                        onClick={() => {
+                          if (isParentMode && onOpenEditModal) {
+                            onOpenEditModal(item, item.weekday, 'thisWeek');
+                          }
+                        }}
+                        className={`rounded-xl p-2.5 text-left border border-dashed border-slate-300 bg-slate-100/80 shadow-2xs flex flex-col justify-between opacity-80 ${
+                          isParentMode && onOpenEditModal ? 'cursor-pointer' : ''
+                        }`}
                         style={{
                           borderLeftWidth: '4px',
                           borderLeftColor: '#94a3b8',
@@ -288,7 +429,10 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
                               <button
                                 type="button"
                                 data-testid={`weekly-edit-item-btn-${item.id}`}
-                                onClick={() => onOpenEditModal(item, item.weekday)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenEditModal(item, item.weekday, 'thisWeek');
+                                }}
                                 className="p-1 rounded hover:bg-black/10 text-slate-500 hover:text-slate-800 transition-colors"
                                 title="시간표 편집 및 조정"
                               >

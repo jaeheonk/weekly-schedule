@@ -801,5 +801,93 @@ describe('App & Hash Navigation (Seam 2)', () => {
         expect(await screen.findByTestId('star-celebration-modal')).toBeInTheDocument();
       });
     });
+
+    describe('Weekly View Scope Modes & Modal Propagation (Issue 02)', () => {
+      it('propagates active weekly view scope to ScheduleEditModal and SchedulePrintModal', async () => {
+        globalScheduleStore.setCurrentDate(new Date(2026, 10, 9));
+        globalScheduleStore.unlockParentMode();
+
+        render(<App syncOnMount={false} />);
+
+        // Switch to Weekly Schedule tab
+        const weeklyTab = screen.getByRole('button', { name: /주간 시간표/i });
+        fireEvent.click(weeklyTab);
+        expect(screen.getByTestId('weekly-view')).toBeInTheDocument();
+
+        // 1. In default thisWeek scope, "+ 새 일정 추가" opens ScheduleEditModal preset to thisWeek scope
+        const addBtn = screen.getByTestId('weekly-add-item-btn');
+        fireEvent.click(addBtn);
+
+        expect(screen.getByTestId('schedule-edit-modal')).toBeInTheDocument();
+        const thisWeekRadio = screen.getByTestId('scope-this-week-radio');
+        expect(thisWeekRadio).toHaveClass('bg-white');
+        fireEvent.click(screen.getByRole('button', { name: '취소' }));
+
+        // 2. In default thisWeek scope, "A4 1페이지 인쇄" opens SchedulePrintModal with thisWeek scope active
+        const printBtn = screen.getByTestId('weekly-print-btn');
+        fireEvent.click(printBtn);
+
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        const printThisWeekBtn = screen.getByTestId('print-scope-thisweek-btn');
+        expect(printThisWeekBtn).toHaveClass('bg-amber-600');
+        fireEvent.click(screen.getByRole('button', { name: '닫기' }));
+
+        // 3. Switch Weekly View to master scope
+        const masterScopeBtn = screen.getByTestId('weekly-scope-master-btn');
+        fireEvent.click(masterScopeBtn);
+
+        // 4. In master scope, "+ 새 일정 추가" opens ScheduleEditModal preset to master scope
+        fireEvent.click(screen.getByTestId('weekly-add-item-btn'));
+        expect(screen.getByTestId('schedule-edit-modal')).toBeInTheDocument();
+        const masterRadio = screen.getByTestId('scope-master-radio');
+        expect(masterRadio).toHaveClass('bg-white');
+        fireEvent.click(screen.getByRole('button', { name: '취소' }));
+
+        // 5. In master scope, "A4 1페이지 인쇄" opens SchedulePrintModal with master scope active
+        fireEvent.click(screen.getByTestId('weekly-print-btn'));
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+        const printMasterBtn = screen.getByTestId('print-scope-master-btn');
+        expect(printMasterBtn).toHaveClass('bg-blue-600');
+        fireEvent.click(screen.getByRole('button', { name: '닫기' }));
+
+        // 6. In master scope, clicking a schedule card opens ScheduleEditModal with master scope
+        const mondayItem = globalScheduleStore.getItemsForWeekday(1)[0];
+        const editCardBtn = screen.getByTestId(`weekly-edit-item-btn-${mondayItem.id}`);
+        fireEvent.click(editCardBtn);
+        expect(screen.getByTestId('schedule-edit-modal')).toBeInTheDocument();
+        expect(screen.getByTestId('scope-master-radio')).toHaveClass('bg-white');
+        fireEvent.click(screen.getByRole('button', { name: '취소' }));
+
+        // 7. Temporary addition in this week is filtered out when in master scope
+        globalScheduleStore.addItem(
+          {
+            id: 'temp-app-item-fri',
+            title: '금요일 특별 세미나',
+            category: 'study',
+            weekday: 5,
+            startHour: 15,
+            startMinute: 0,
+            endHour: 16,
+            endMinute: 0,
+            note: '',
+            iconName: 'book.fill',
+            subTasks: [],
+            isNotificationEnabled: true,
+            notificationLeadMinutes: [10],
+            targetWeekKey: null,
+            updatedAt: Date.now() / 1000,
+          },
+          [5],
+          'thisWeek'
+        );
+
+        // Currently in master scope -> temporary addition is hidden
+        expect(screen.queryByText('금요일 특별 세미나')).not.toBeInTheDocument();
+
+        // Switch to thisWeek scope -> temporary addition appears
+        fireEvent.click(screen.getByTestId('weekly-scope-thisweek-btn'));
+        expect(screen.getByText('금요일 특별 세미나')).toBeInTheDocument();
+      });
+    });
   });
 });
