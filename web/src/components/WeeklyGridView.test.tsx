@@ -55,7 +55,7 @@ describe('WeeklyGridView & Weekly Overrides Display (Seam 3)', () => {
     expect(resetBanner).toHaveTextContent('1건');
 
     const resetBtn = screen.getByTestId('reset-weekly-adjustments-btn');
-    expect(resetBtn).toHaveTextContent('이번주 조정 초기화');
+    expect(resetBtn).toHaveTextContent('이번 주 조정 초기화');
     fireEvent.click(resetBtn);
 
     expect(store.getCurrentWeekAdjustmentCount()).toBe(0);
@@ -109,7 +109,7 @@ describe('WeeklyGridView & Weekly Overrides Display (Seam 3)', () => {
 
     // Switch to Master Scope
     fireEvent.click(masterBtn);
-    expect(subBanner).toHaveTextContent(/칸을 탭하면 매주 반복되는 전체 기본 스케줄이 영구적으로 변경됩니다/);
+    expect(subBanner).toHaveTextContent(/전체 기본 시간표가 변경됩니다/);
 
     // Switch back to This Week Scope
     fireEvent.click(thisWeekBtn);
@@ -204,7 +204,7 @@ describe('WeeklyGridView & Weekly Overrides Display (Seam 3)', () => {
     expect(thisWeekBtn).toBeInTheDocument();
 
     fireEvent.click(masterBtn);
-    expect(screen.getByTestId('weekly-scope-subbanner')).toHaveTextContent(/전체 기본 스케줄이 영구적으로 변경됩니다/);
+    expect(screen.getByTestId('weekly-scope-subbanner')).toHaveTextContent(/전체 기본 시간표가 변경됩니다/);
 
     // Administrative controls are hidden
     expect(screen.queryByTestId('weekly-add-item-btn')).not.toBeInTheDocument();

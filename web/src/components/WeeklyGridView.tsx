@@ -129,7 +129,7 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
             <Clock className="w-3.5 h-3.5" />
             <span>
               {adjustmentCount > 0
-                ? `이번 주 시간표 (조정 ${adjustmentCount}건)`
+                ? `이번 주 적용 시간표 (조정 ${adjustmentCount}건)`
                 : '이번 주 적용 시간표'}
             </span>
           </button>
@@ -161,7 +161,7 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
             <div>
               <span className="font-semibold">
                 {weeklyScope === 'master'
-                  ? '칸을 탭하면 매주 반복되는 전체 기본 스케줄이 영구적으로 변경됩니다.'
+                  ? '칸을 탭하면 매주 반복되는 전체 기본 시간표가 변경됩니다.'
                   : '이번 주에만 일시 조정된 시간표입니다. (다음 주 월요일 원래대로 자동 복구)'}
               </span>
               {adjustmentCount > 0 && (
@@ -184,7 +184,7 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
               className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-white text-amber-800 hover:bg-amber-100/80 font-bold text-xs border border-amber-300 shadow-2xs transition-all active:scale-95 ml-auto"
             >
               <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
-              <span>이번주 조정 초기화</span>
+              <span>이번 주 조정 초기화</span>
             </button>
           )}
         </div>
