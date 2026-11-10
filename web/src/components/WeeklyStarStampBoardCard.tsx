@@ -45,7 +45,7 @@ export const WeeklyStarStampBoardCard: React.FC<WeeklyStarStampBoardCardProps> =
   const availableStars = store.getAvailableStars();
   const pendingCount = store.getPendingStarRedemptionCount();
   const currentToday = store.getCurrentWeekday();
-  const effectiveSelectedDay = selectedWeekday || currentToday;
+  const effectiveSelectedDay = selectedWeekday ?? store.getSelectedWeekday();
 
   const weekdaysList: WeekdayNumber[] = [1, 2, 3, 4, 5];
 
@@ -193,7 +193,12 @@ export const WeeklyStarStampBoardCard: React.FC<WeeklyStarStampBoardCardProps> =
                 <button
                   key={d}
                   type="button"
-                  onClick={() => onTapWeekdaySlot?.(d)}
+                  data-testid={`stamp-slot-${d}`}
+                  data-selected={isSelected}
+                  onClick={() => {
+                    store.setSelectedWeekday(d);
+                    onTapWeekdaySlot?.(d);
+                  }}
                   className={`flex flex-col items-center justify-center p-1.5 sm:p-2 rounded-xl border transition-all ${renderSlotBackground(
                     state
                   )} ${isSelected ? 'ring-2 ring-amber-500 ring-offset-1' : ''}`}
@@ -250,6 +255,16 @@ export const WeeklyStarStampBoardCard: React.FC<WeeklyStarStampBoardCardProps> =
               )}
             </button>
           </div>
+
+          {(effectiveSelectedDay === 6 || effectiveSelectedDay === 7) && (
+            <div
+              data-testid="stamp-board-weekend-notice"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50/80 border border-amber-200/60 text-[11px] font-medium text-amber-800"
+            >
+              <span>☀️</span>
+              <span>주말(토·일)은 자유 일정으로 평일 스타 적립 대상에서 제외돼요.</span>
+            </div>
+          )}
         </div>
       )}
 

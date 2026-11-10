@@ -313,4 +313,184 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       expect(mockOpenReward).toHaveBeenCalledTimes(1);
     });
   });
+
+  describe('Mon-Sun Weekday Selector Bar & Stamp Board Sync (Issue 01)', () => {
+    it('renders 7-column Mon-Sun weekday selector bar with 3-tier labels, weekend colors, and status indicators', () => {
+      // Monday Nov 9, 2026 is actual today (1)
+      store.unlockParentMode();
+
+      // 1. Monday (1): actual today -> top label "오늘", award star -> bottom status "star-awarded"
+      const monItems = store.getItemsForWeekday(1).filter((it) => store.isItemCheckable(it));
+      for (const item of monItems) {
+        store.toggleCompletion(item);
+        store.toggleParentVerification(item);
+      }
+      store.awardDailyStar(1);
+
+      // 2. Tuesday (2): all verified -> claimable -> top label "수여", bottom status "star-claimable"
+      const tueItems = store.getItemsForWeekday(2).filter((it) => store.isItemCheckable(it));
+      for (const item of tueItems) {
+        store.toggleCompletion(item);
+        store.toggleParentVerification(item);
+      }
+
+      // 3. Wednesday (3): all child completed (unverified) -> bottom status "all-completed", plus 1 adjustment -> top label "조정"
+      const wedItems = store.getItemsForWeekday(3).filter((it) => store.isItemCheckable(it));
+      for (const item of wedItems) {
+        store.toggleCompletion(item);
+      }
+      store.updateItem({ ...wedItems[0], startHour: 20, endHour: 21 }, 'thisWeek');
+
+      // 4. Thursday (4): 1 item completed -> bottom status "in-progress"
+      const thuItems = store.getItemsForWeekday(4).filter((it) => store.isItemCheckable(it));
+      store.toggleCompletion(thuItems[0]);
+
+      // 5. Saturday (6): all checkable items parent-verified (weekend excluded from stars) -> bottom status "all-verified"
+      const satItems = store.getItemsForWeekday(6).filter((it) => store.isItemCheckable(it));
+      for (const item of satItems) {
+        store.toggleCompletion(item);
+        store.toggleParentVerification(item);
+      }
+
+      render(
+        <TodayScheduleView
+          items={store.getTodayItems()}
+          weekdayName="월요일"
+          store={store}
+          onPlayChime={mockPlayChime}
+        />
+      );
+
+      const selectorBar = screen.getByTestId('weekday-selector-bar');
+      expect(selectorBar).toBeInTheDocument();
+      expect(selectorBar.className).toContain('grid-cols-7');
+
+      // All 7 weekday buttons exist
+      for (const d of [1, 2, 3, 4, 5, 6, 7] as const) {
+        expect(screen.getByTestId(`weekday-btn-${d}`)).toBeInTheDocument();
+      }
+
+      // Top micro-labels
+      expect(screen.getByTestId('weekday-top-label-1')).toHaveTextContent('오늘');
+      expect(screen.getByTestId('weekday-top-label-2')).toHaveTextContent('수여');
+      expect(screen.getByTestId('weekday-top-label-3')).toHaveTextContent('조정');
+
+      // Weekend text colors when unselected
+      expect(screen.getByTestId('weekday-short-name-6').className).toContain('text-blue-600');
+      expect(screen.getByTestId('weekday-short-name-7').className).toMatch(/text-(red|rose)-/);
+
+      // Selected day (1) has white text
+      expect(screen.getByTestId('weekday-short-name-1').className).toContain('text-white');
+
+      // Bottom status indicators
+      expect(screen.getByTestId('weekday-status-indicator-1')).toHaveAttribute(
+        'data-status',
+        'star-awarded'
+      );
+      expect(screen.getByTestId('weekday-status-indicator-2')).toHaveAttribute(
+        'data-status',
+        'star-claimable'
+      );
+      expect(screen.getByTestId('weekday-status-indicator-3')).toHaveAttribute(
+        'data-status',
+        'all-completed'
+      );
+      expect(screen.getByTestId('weekday-status-indicator-4')).toHaveAttribute(
+        'data-status',
+        'in-progress'
+      );
+      expect(screen.getByTestId('weekday-status-indicator-6')).toHaveAttribute(
+        'data-status',
+        'all-verified'
+      );
+    });
+
+    it('switches Daily Schedule items when selecting another weekday, shows "오늘" button, and synchronizes with WeeklyStarStampBoardCard', () => {
+      render(
+        <TodayScheduleView
+          items={store.getTodayItems()}
+          weekdayName="월요일"
+          store={store}
+          onPlayChime={mockPlayChime}
+        />
+      );
+
+      // Initially on Monday (today): "오늘" back button is hidden
+      expect(screen.queryByTestId('back-to-today-btn')).not.toBeInTheDocument();
+
+      // Switch to Friday (5) via WeekdaySelectorBar
+      fireEvent.click(screen.getByTestId('weekday-btn-5'));
+      expect(store.getSelectedWeekday()).toBe(5);
+
+      // "오늘" button is now visible
+      const backToTodayBtn = screen.getByTestId('back-to-today-btn');
+      expect(backToTodayBtn).toBeInTheDocument();
+      expect(backToTodayBtn).toHaveTextContent('오늘');
+
+      // Expand WeeklyStarStampBoardCard and verify Friday slot is highlighted
+      fireEvent.click(screen.getByText('평일 스타'));
+      expect(screen.getByTestId('stamp-slot-5')).toHaveAttribute('data-selected', 'true');
+
+      // Tap Wednesday (3) slot in WeeklyStarStampBoardCard -> switches selectedWeekday to 3
+      fireEvent.click(screen.getByTestId('stamp-slot-3'));
+      expect(store.getSelectedWeekday()).toBe(3);
+      expect(screen.getByTestId('weekday-btn-3')).toHaveAttribute('data-selected', 'true');
+
+      // Tap Sunday (7) in WeekdaySelectorBar -> shows weekend exclusion notice in expanded stamp board
+      fireEvent.click(screen.getByTestId('weekday-btn-7'));
+      expect(store.getSelectedWeekday()).toBe(7);
+      expect(screen.getByTestId('stamp-board-weekend-notice')).toHaveTextContent(
+        '주말(토·일)은 자유 일정으로 평일 스타 적립 대상에서 제외돼요.'
+      );
+
+      // Click "오늘" button -> returns immediately to Monday (1)
+      fireEvent.click(screen.getByTestId('back-to-today-btn'));
+      expect(store.getSelectedWeekday()).toBe(1);
+      expect(screen.queryByTestId('back-to-today-btn')).not.toBeInTheDocument();
+    });
+
+    it('allows completing items/subtasks, stamping parent verification, and sending Praise Hearts on non-today weekdays including weekends', () => {
+      store.unlockParentMode();
+      const mockOpenPraise = vi.fn();
+
+      render(
+        <TodayScheduleView
+          items={store.getTodayItems()}
+          weekdayName="월요일"
+          store={store}
+          onPlayChime={mockPlayChime}
+          onOpenPraiseModal={mockOpenPraise}
+        />
+      );
+
+      // Switch to Saturday (6)
+      fireEvent.click(screen.getByTestId('weekday-btn-6'));
+      expect(store.getSelectedWeekday()).toBe(6);
+
+      const satCheckable = store
+        .getItemsForWeekday(6)
+        .find((it) => store.isItemCheckable(it))!;
+      expect(satCheckable).toBeDefined();
+
+      // Complete item on Saturday
+      const checkBtn = screen.getByTestId(`item-check-btn-${satCheckable.id}`);
+      fireEvent.click(checkBtn);
+      expect(store.isCompleted(satCheckable)).toBe(true);
+      expect(mockPlayChime).toHaveBeenCalledTimes(1);
+
+      // Stamp parent verification on Saturday
+      const stampBtn = screen.getByTestId(`item-parent-stamp-btn-${satCheckable.id}`);
+      fireEvent.click(stampBtn);
+      expect(store.isParentVerified(satCheckable)).toBe(true);
+
+      // Unstamp parent verification on Saturday
+      fireEvent.click(stampBtn);
+      expect(store.isParentVerified(satCheckable)).toBe(false);
+
+      // Send Praise Heart on Saturday item
+      const praiseBtn = screen.getByTestId(`item-praise-btn-${satCheckable.id}`);
+      fireEvent.click(praiseBtn);
+      expect(mockOpenPraise).toHaveBeenCalledWith(satCheckable);
+    });
+  });
 });

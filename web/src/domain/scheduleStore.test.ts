@@ -1126,4 +1126,81 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(reloadedAfterReset.getRewardPresets()).toHaveLength(8);
     });
   });
+
+  describe('Daily Schedule Selected Weekday & Adjustment Count (Issue 01)', () => {
+    it('initializes selectedWeekday to todayWeekday, allows manual selection, and rolls over past midnight', () => {
+      // Monday Nov 9, 2026 23:50
+      const mondayNight = new Date(2026, 10, 9, 23, 50, 0);
+      const store = new ScheduleStore({ currentDate: mondayNight });
+
+      expect(store.getTodayWeekday()).toBe(1);
+      expect(store.getSelectedWeekday()).toBe(1);
+
+      // Select Thursday (4)
+      store.setSelectedWeekday(4);
+      expect(store.getSelectedWeekday()).toBe(4);
+
+      // Periodic check on the same calendar day (Monday 23:58) keeps selectedWeekday = 4
+      const mondayLate = new Date(2026, 10, 9, 23, 58, 0);
+      expect(store.refreshDateAndDayChange(mondayLate)).toBe(false);
+      expect(store.getSelectedWeekday()).toBe(4);
+
+      // Rollover past midnight to Tuesday Nov 10, 2026 00:02
+      const tuesdayMorning = new Date(2026, 10, 10, 0, 2, 0);
+      expect(store.refreshDateAndDayChange(tuesdayMorning)).toBe(true);
+      expect(store.getTodayWeekday()).toBe(2);
+      expect(store.getSelectedWeekday()).toBe(2);
+    });
+
+    it('computes getAdjustmentCountForWeekday across modified, skipped, moved, and added items', () => {
+      const monday = new Date(2026, 10, 9);
+      const store = new ScheduleStore({ currentDate: monday });
+      store.unlockParentMode();
+
+      expect(store.getAdjustmentCountForWeekday(1)).toBe(0);
+      expect(store.getAdjustmentCountForWeekday(2)).toBe(0);
+
+      const monItems = store.getItemsForWeekday(1);
+      const itemToSkip = monItems[0];
+      const itemToMove = monItems[1];
+      const itemToModify = monItems[2];
+
+      // 1. Skip item on Monday -> Monday adjustment count = 1
+      store.skipItemForThisWeek(itemToSkip);
+      expect(store.getAdjustmentCountForWeekday(1)).toBe(1);
+
+      // 2. Move item from Monday (1) to Tuesday (2) -> Monday count = 2, Tuesday count = 1
+      store.updateItem({ ...itemToMove, weekday: 2 }, 'thisWeek');
+      expect(store.getAdjustmentCountForWeekday(1)).toBe(2);
+      expect(store.getAdjustmentCountForWeekday(2)).toBe(1);
+
+      // 3. Modify time on Monday -> Monday count = 3
+      store.updateItem({ ...itemToModify, startHour: 20, endHour: 21 }, 'thisWeek');
+      expect(store.getAdjustmentCountForWeekday(1)).toBe(3);
+
+      // 4. Add temporary thisWeek item on Tuesday -> Tuesday count = 2
+      store.addItem(
+        {
+          id: 'temp-tue-1',
+          weekday: 2,
+          startHour: 18,
+          startMinute: 0,
+          endHour: 19,
+          endMinute: 0,
+          title: '화요일 보강',
+          note: '',
+          category: 'academy',
+          iconName: 'building.columns.fill',
+          subTasks: [],
+          isNotificationEnabled: false,
+          notificationLeadMinutes: [],
+          targetWeekKey: null,
+          updatedAt: Date.now() / 1000,
+        },
+        [2],
+        'thisWeek'
+      );
+      expect(store.getAdjustmentCountForWeekday(2)).toBe(2);
+    });
+  });
 });

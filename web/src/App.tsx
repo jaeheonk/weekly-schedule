@@ -12,7 +12,6 @@ import { ScheduleEditModal } from './components/ScheduleEditModal';
 import { SchedulePrintModal } from './components/SchedulePrintModal';
 import { useCloudSync } from './hooks/useCloudSync';
 import { globalScheduleStore } from './domain/scheduleStore';
-import { compareScheduleItemsByTime } from './domain/calendarUtils';
 import { ScheduleItem, WEEKDAYS, WeekdayNumber, ScheduleEditScope } from './types/schedule';
 import { StarCelebrationContext } from './types/snapshot';
 
@@ -47,6 +46,9 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
   );
   const [celebrationContext, setCelebrationContext] = useState<StarCelebrationContext | null>(() =>
     globalScheduleStore.getCelebrationContext()
+  );
+  const [selectedWeekday, setSelectedWeekday] = useState<WeekdayNumber>(() =>
+    globalScheduleStore.getSelectedWeekday()
   );
 
   const [pendingAwardDay, setPendingAwardDay] = useState<WeekdayNumber | null>(null);
@@ -128,8 +130,28 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
       setAvailableStars(globalScheduleStore.getAvailableStars());
       setPendingStarRedemptions(globalScheduleStore.getPendingStarRedemptionCount());
       setCelebrationContext(globalScheduleStore.getCelebrationContext());
+      setSelectedWeekday(globalScheduleStore.getSelectedWeekday());
     });
     return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    const checkDateChange = () => {
+      globalScheduleStore.refreshDateAndDayChange();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        globalScheduleStore.refreshDateAndDayChange();
+      }
+    };
+    const intervalId = setInterval(checkDateChange, 30_000);
+    window.addEventListener('focus', checkDateChange);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', checkDateChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   useEffect(() => {
@@ -152,9 +174,6 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
   };
 
   const currentWeekdayInfo = WEEKDAYS.find((w) => w.number === currentWeekday);
-  const todayItems = items
-    .filter((item) => item.weekday === currentWeekday)
-    .sort(compareScheduleItemsByTime);
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col text-slate-800 overflow-x-hidden w-full max-w-full">
@@ -192,7 +211,6 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
           />
         ) : activeTab === 'today' ? (
           <TodayScheduleView
-            items={todayItems}
             weekdayName={currentWeekdayInfo?.fullName || '오늘'}
             store={globalScheduleStore}
             onOpenPraiseModal={(target) =>
@@ -201,7 +219,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
                 targetItem: target === undefined ? null : target,
               })
             }
-            onOpenEditModal={(target) => handleOpenEditModal(target || null, currentWeekday)}
+            onOpenEditModal={(target) => handleOpenEditModal(target || null, selectedWeekday)}
             onOpenParentPin={(day) => {
               if (day) setPendingAwardDay(day as WeekdayNumber);
               setIsPinModalOpen(true);

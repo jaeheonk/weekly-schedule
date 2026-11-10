@@ -78,6 +78,8 @@ export type ToggleOutcome =
 export class ScheduleStore {
   private items: ScheduleItem[] = [];
   private currentDate: Date;
+  private selectedWeekday: WeekdayNumber;
+  private lastObservedDateKey: string;
   private listeners: Set<StoreListener> = new Set();
   private toastListeners: Set<
     (message: string, status: 'idle' | 'syncing' | 'success' | 'error') => void
@@ -123,6 +125,8 @@ export class ScheduleStore {
 
   constructor(options: ScheduleStoreOptions = {}) {
     this.currentDate = options.currentDate || new Date();
+    this.lastObservedDateKey = this.formatLocalDateKey(this.currentDate);
+    this.selectedWeekday = getWeekdayNumber(this.currentDate);
     this.loadDeviceId();
     this.loadSyncConfig();
     this.loadInitialItems();
@@ -130,6 +134,10 @@ export class ScheduleStore {
     this.loadDeviceRole();
     this.loadPinSecurityState();
     this.loadSnapshotMeta();
+  }
+
+  private formatLocalDateKey(date: Date): string {
+    return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
   }
 
   public subscribe(listener: StoreListener): () => void {
@@ -568,6 +576,8 @@ export class ScheduleStore {
   }
 
   public reloadFromStorage(): void {
+    this.lastObservedDateKey = this.formatLocalDateKey(this.currentDate);
+    this.selectedWeekday = getWeekdayNumber(this.currentDate);
     this.loadInitialItems();
     this.loadCompletions();
     this.loadDeviceRole();
@@ -1369,6 +1379,27 @@ export class ScheduleStore {
     return activeOverrideCount + addedThisWeekCount;
   }
 
+  public getAdjustmentCountForWeekday(weekday: WeekdayNumber, weekKey?: WeekKey): number {
+    const wk = weekKey || this.getCurrentWeekKey();
+    const adjustedOnDay = this.getItemsForWeekday(weekday, wk).filter((item) =>
+      this.isAdjustedThisWeek(item, wk)
+    ).length;
+
+    let excludedFromDay = 0;
+    for (const base of this.getMasterItems()) {
+      if (base.weekday !== weekday) continue;
+      const override = this.activeOverride(base.id, wk);
+      if (!override) continue;
+      if (override.isSkipped) {
+        excludedFromDay++;
+      } else if (override.overriddenItem && override.overriddenItem.weekday !== weekday) {
+        excludedFromDay++;
+      }
+    }
+
+    return adjustedOnDay + excludedFromDay;
+  }
+
   public hasSameScheduleContent(a: ScheduleItem, b: ScheduleItem): boolean {
     const aSub = (a.subTasks || []).map((s) => s.title).join('|');
     const bSub = (b.subTasks || []).map((s) => s.title).join('|');
@@ -2002,8 +2033,23 @@ export class ScheduleStore {
   }
 
   public setCurrentDate(date: Date): void {
-    this.currentDate = date;
-    this.notify();
+    const didRollover = this.refreshDateAndDayChange(date);
+    if (!didRollover) {
+      this.notify();
+    }
+  }
+
+  public refreshDateAndDayChange(now: Date = new Date()): boolean {
+    const nextDateKey = this.formatLocalDateKey(now);
+    const dayChanged = nextDateKey !== this.lastObservedDateKey;
+    this.currentDate = now;
+    if (dayChanged) {
+      this.lastObservedDateKey = nextDateKey;
+      this.selectedWeekday = getWeekdayNumber(now);
+      this.notify();
+      return true;
+    }
+    return false;
   }
 
   public getCurrentWeekKey(): WeekKey {
@@ -2012,6 +2058,20 @@ export class ScheduleStore {
 
   public getCurrentWeekday(): WeekdayNumber {
     return getWeekdayNumber(this.currentDate);
+  }
+
+  public getTodayWeekday(): WeekdayNumber {
+    return this.getCurrentWeekday();
+  }
+
+  public getSelectedWeekday(): WeekdayNumber {
+    return this.selectedWeekday;
+  }
+
+  public setSelectedWeekday(weekday: WeekdayNumber): void {
+    if (this.selectedWeekday === weekday) return;
+    this.selectedWeekday = weekday;
+    this.notify();
   }
 
   public getItemsForWeekday(weekday: WeekdayNumber, weekKey?: WeekKey): ScheduleItem[] {

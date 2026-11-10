@@ -637,5 +637,54 @@ describe('App & Hash Navigation (Seam 2)', () => {
         expect(screen.getByTestId('star-reward-shop-view')).toBeInTheDocument();
       });
     });
+
+    describe('Selected Weekday Session Persistence & Midnight Rollover (Issue 01)', () => {
+      it('preserves selectedWeekday when switching between Today, Weekly, and Star Shop tabs, and rolls over past midnight on window focus', () => {
+        vi.useFakeTimers();
+        try {
+          // Monday Nov 9, 2026 23:55
+          const mondayLate = new Date(2026, 10, 9, 23, 55, 0);
+          vi.setSystemTime(mondayLate);
+          globalScheduleStore.setCurrentDate(mondayLate);
+
+          render(<App syncOnMount={false} />);
+
+          expect(globalScheduleStore.getSelectedWeekday()).toBe(1);
+          expect(screen.getByTestId('weekday-btn-1')).toHaveAttribute('data-selected', 'true');
+
+          // Select Thursday (4)
+          fireEvent.click(screen.getByTestId('weekday-btn-4'));
+          expect(globalScheduleStore.getSelectedWeekday()).toBe(4);
+          expect(screen.getByTestId('weekday-btn-4')).toHaveAttribute('data-selected', 'true');
+
+          // Navigate to Weekly Schedule tab (#weekly) and back to Today (#today)
+          fireEvent.click(screen.getByRole('button', { name: /주간 시간표/i }));
+          expect(screen.getByTestId('weekly-view')).toBeInTheDocument();
+
+          fireEvent.click(screen.getByRole('button', { name: /오늘의 할 일/i }));
+          expect(screen.getByTestId('today-view')).toBeInTheDocument();
+          expect(globalScheduleStore.getSelectedWeekday()).toBe(4);
+          expect(screen.getByTestId('weekday-btn-4')).toHaveAttribute('data-selected', 'true');
+
+          // Navigate to Star Shop tab (#stars) and back to Today (#today)
+          fireEvent.click(screen.getByTestId('nav-tab-stars'));
+          expect(screen.getByTestId('star-reward-shop-view')).toBeInTheDocument();
+
+          fireEvent.click(screen.getByRole('button', { name: /오늘의 할 일/i }));
+          expect(globalScheduleStore.getSelectedWeekday()).toBe(4);
+          expect(screen.getByTestId('weekday-btn-4')).toHaveAttribute('data-selected', 'true');
+
+          // Advance system time past midnight to Tuesday Nov 10, 2026 00:05 and trigger window focus
+          vi.setSystemTime(new Date(2026, 10, 10, 0, 5, 0));
+          fireEvent.focus(window);
+
+          expect(globalScheduleStore.getTodayWeekday()).toBe(2);
+          expect(globalScheduleStore.getSelectedWeekday()).toBe(2);
+          expect(screen.getByTestId('weekday-btn-2')).toHaveAttribute('data-selected', 'true');
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+    });
   });
 });

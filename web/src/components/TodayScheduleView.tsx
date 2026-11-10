@@ -16,8 +16,9 @@ import {
   Plus,
   RotateCcw,
   Ban,
+  Star,
 } from 'lucide-react';
-import { ScheduleItem, CATEGORIES, SubTask, WeekdayNumber } from '../types/schedule';
+import { ScheduleItem, CATEGORIES, SubTask, WeekdayNumber, WEEKDAYS } from '../types/schedule';
 import { STICKER_EMOJIS } from '../types/snapshot';
 import { formatTimeRange, formatTime } from '../domain/calendarUtils';
 import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
@@ -25,8 +26,8 @@ import { playCompletionChime } from '../services/soundEffects';
 import { WeeklyStarStampBoardCard } from './WeeklyStarStampBoardCard';
 
 export interface TodayScheduleViewProps {
-  items: ScheduleItem[];
-  weekdayName: string;
+  items?: ScheduleItem[];
+  weekdayName?: string;
   store?: ScheduleStore;
   onPlayChime?: () => void;
   onOpenPraiseModal?: (item?: ScheduleItem | null) => void;
@@ -36,7 +37,6 @@ export interface TodayScheduleViewProps {
 }
 
 export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
-  items,
   weekdayName,
   store = globalScheduleStore,
   onPlayChime = playCompletionChime,
@@ -55,6 +55,25 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
     return unsubscribe;
   }, [store]);
 
+  useEffect(() => {
+    const checkDateChange = () => {
+      store.refreshDateAndDayChange();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        store.refreshDateAndDayChange();
+      }
+    };
+    const intervalId = setInterval(checkDateChange, 30_000);
+    window.addEventListener('focus', checkDateChange);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      clearInterval(intervalId);
+      window.removeEventListener('focus', checkDateChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [store]);
+
   const showNotice = (msg: string) => {
     setNoticeMessage(msg);
   };
@@ -67,14 +86,18 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
     return () => clearTimeout(timer);
   }, [noticeMessage]);
 
-  const stats = store.getCompletionStats(items);
+  const todayWeekday = store.getTodayWeekday();
+  const selectedWeekday = store.getSelectedWeekday();
+  const todayWeekdayInfo = WEEKDAYS.find((w) => w.number === todayWeekday);
+  const effectiveTodayName = weekdayName || todayWeekdayInfo?.fullName || '오늘';
+  const displayedItems = store.getItemsForWeekday(selectedWeekday);
+  const stats = store.getCompletionStats(todayWeekday);
   const isParentMode = store.isParentMode();
   const availableHearts = store.getAvailableHearts();
   const latestPraise = store.getLatestPraiseNote();
-  const currentWeekday = store.getCurrentWeekday();
-  const skippedTodayItems = store
+  const skippedSelectedDayItems = store
     .getMasterItems()
-    .filter((it) => it.weekday === currentWeekday && store.isSkippedThisWeek(it.id));
+    .filter((it) => it.weekday === selectedWeekday && store.isSkippedThisWeek(it.id));
 
   const handleItemToggle = (item: ScheduleItem) => {
     const wasCompleted = store.isCompleted(item);
@@ -212,10 +235,20 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
         </div>
       )}
 
-      {/* Parent Mode Top Action Bar (when no praise notes yet) */}
-      {isParentMode && !latestPraise && (
+      {/* Top Action Bar ("오늘" Return Button + Parent Mode Quick Actions) */}
+      {(selectedWeekday !== todayWeekday || (isParentMode && !latestPraise)) && (
         <div className="flex items-center justify-end gap-2">
-          {onOpenEditModal && (
+          {selectedWeekday !== todayWeekday && (
+            <button
+              type="button"
+              data-testid="back-to-today-btn"
+              onClick={() => store.setSelectedWeekday(todayWeekday)}
+              className="flex items-center gap-1 px-3.5 py-2 rounded-2xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-xs border border-blue-200 shadow-2xs transition-all active:scale-95 cursor-pointer"
+            >
+              <span>오늘</span>
+            </button>
+          )}
+          {isParentMode && !latestPraise && onOpenEditModal && (
             <button
               type="button"
               data-testid="today-add-schedule-btn"
@@ -226,7 +259,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
               <span>새 일정 추가</span>
             </button>
           )}
-          {onOpenPraiseModal && (
+          {isParentMode && !latestPraise && onOpenPraiseModal && (
             <button
               type="button"
               data-testid="send-family-praise-btn"
@@ -243,6 +276,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
       {/* ⭐ Weekly Star Stamp Board Card (Mon-Fri +1⭐ & Weekly Bonus +2⭐) */}
       <WeeklyStarStampBoardCard
         store={store}
+        onTapWeekdaySlot={(day) => store.setSelectedWeekday(day)}
         onTapStarShop={() => {
           window.location.hash = '#stars';
         }}
@@ -253,8 +287,160 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
             onOpenParentPin(day);
           }
         }}
-        selectedWeekday={currentWeekday}
+        selectedWeekday={selectedWeekday}
       />
+
+      {/* Mon–Sun 7-Column Weekday Selector Bar (375px single-row fit, ADR-0003) */}
+      <div
+        data-testid="weekday-selector-bar"
+        className="grid grid-cols-7 gap-1 sm:gap-1.5 w-full min-w-0"
+      >
+        {WEEKDAYS.map((day) => {
+          const isSelected = selectedWeekday === day.number;
+          const isToday = todayWeekday === day.number;
+          const dayStats = store.getCompletionStats(day.number);
+          const starState = store.getWeekdayStarState(day.number);
+          const allVerified = dayStats.total > 0 && dayStats.verified === dayStats.total;
+          const allChildDone = dayStats.total > 0 && dayStats.completed === dayStats.total;
+          const hasAdjustment = store.getAdjustmentCountForWeekday(day.number) > 0;
+          const isStarClaimable = starState.kind === 'claimable';
+
+          const topLabelText = isToday
+            ? '오늘'
+            : isStarClaimable
+            ? '수여'
+            : hasAdjustment
+            ? '조정'
+            : '\u00A0';
+
+          const topLabelColor = isToday
+            ? isSelected
+              ? 'text-white/90'
+              : 'text-blue-600'
+            : isStarClaimable
+            ? isSelected
+              ? 'text-yellow-300'
+              : 'text-pink-600'
+            : hasAdjustment
+            ? isSelected
+              ? 'text-yellow-300'
+              : 'text-amber-600'
+            : 'text-transparent select-none';
+
+          const shortNameColor = isSelected
+            ? 'text-white font-extrabold'
+            : day.number === 7
+            ? 'text-rose-600 font-bold'
+            : day.number === 6
+            ? 'text-blue-600 font-bold'
+            : 'text-slate-800 font-semibold';
+
+          const statusKind =
+            starState.kind === 'awarded'
+              ? 'star-awarded'
+              : starState.kind === 'claimable'
+              ? 'star-claimable'
+              : allVerified
+              ? 'all-verified'
+              : allChildDone
+              ? 'all-completed'
+              : dayStats.completed > 0
+              ? 'in-progress'
+              : hasAdjustment
+              ? 'adjusted'
+              : 'none';
+
+          const buttonBg = isSelected
+            ? 'bg-blue-600 shadow-sm shadow-blue-500/25'
+            : isToday
+            ? 'bg-blue-50/90 hover:bg-blue-100/80'
+            : 'bg-white hover:bg-slate-50';
+
+          const buttonBorder = isSelected
+            ? 'border-blue-600'
+            : isStarClaimable
+            ? 'border-pink-400'
+            : isToday
+            ? 'border-blue-300'
+            : hasAdjustment
+            ? 'border-amber-300'
+            : 'border-slate-200';
+
+          return (
+            <button
+              key={day.number}
+              type="button"
+              data-testid={`weekday-btn-${day.number}`}
+              data-selected={isSelected}
+              aria-pressed={isSelected}
+              onClick={() => store.setSelectedWeekday(day.number)}
+              className={`flex flex-col items-center justify-between py-1.5 px-0.5 rounded-2xl border transition-all min-w-0 cursor-pointer select-none ${buttonBg} ${buttonBorder}`}
+            >
+              <span
+                data-testid={`weekday-top-label-${day.number}`}
+                className={`text-[9px] leading-tight font-extrabold truncate max-w-full ${topLabelColor}`}
+              >
+                {topLabelText}
+              </span>
+
+              <span
+                data-testid={`weekday-short-name-${day.number}`}
+                className={`text-xs sm:text-sm leading-snug my-0.5 ${shortNameColor}`}
+              >
+                {day.shortName}
+              </span>
+
+              <div
+                data-testid={`weekday-status-indicator-${day.number}`}
+                data-status={statusKind}
+                className="h-3.5 flex items-center justify-center"
+              >
+                {starState.kind === 'awarded' ? (
+                  <Star
+                    className={`w-3 h-3 ${
+                      isSelected
+                        ? 'fill-yellow-300 text-yellow-300'
+                        : 'fill-amber-500 text-amber-500'
+                    }`}
+                  />
+                ) : starState.kind === 'claimable' ? (
+                  <Sparkles
+                    className={`w-3 h-3 ${
+                      isSelected ? 'text-yellow-300' : 'text-pink-500'
+                    }`}
+                  />
+                ) : allVerified ? (
+                  <Award
+                    className={`w-3 h-3 ${
+                      isSelected ? 'text-yellow-300' : 'text-emerald-600'
+                    }`}
+                  />
+                ) : allChildDone ? (
+                  <CheckCircle2
+                    className={`w-3 h-3 ${
+                      isSelected ? 'text-yellow-300' : 'text-amber-500'
+                    }`}
+                  />
+                ) : dayStats.completed > 0 ? (
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isSelected ? 'bg-white' : 'bg-blue-500'
+                    }`}
+                  />
+                ) : hasAdjustment ? (
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isSelected ? 'bg-yellow-300' : 'bg-amber-400'
+                    }`}
+                  />
+                ) : (
+                  <span className="w-1.5 h-1.5 rounded-full bg-transparent" />
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
 
       {/* 1. Daily Progress Gauge Card */}
       <div
@@ -267,7 +453,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold bg-white/20 backdrop-blur-sm px-2.5 py-0.5 rounded-full text-white">
-                {weekdayName}
+                {effectiveTodayName}
               </span>
               <span className="text-xs text-blue-100 font-medium">일일 체크리스트</span>
             </div>
@@ -335,14 +521,14 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
       </div>
 
       {/* 2. Schedule Item Cards */}
-      {items.length === 0 ? (
+      {displayedItems.length === 0 ? (
         <div className="p-12 text-center bg-white rounded-3xl border border-dashed border-slate-300 text-slate-500 space-y-2">
           <p className="text-base font-semibold text-slate-700">오늘 등록된 일정이 없습니다.</p>
           <p className="text-xs text-slate-400">자유로운 하루를 즐겨보세요!</p>
         </div>
       ) : (
         <div className="space-y-3">
-          {items.map((item) => {
+          {displayedItems.map((item) => {
             const cat = CATEGORIES[item.category] || CATEGORIES.study;
             const timeStr = formatTimeRange(item.startHour, item.startMinute, item.endHour, item.endMinute);
             const isCheckable = store.isItemCheckable(item);
@@ -640,8 +826,8 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
         </div>
       )}
 
-      {/* Skipped / Cancelled Items for Today (if any) */}
-      {skippedTodayItems.length > 0 && (
+      {/* Skipped / Cancelled Items for Selected Day (if any) */}
+      {skippedSelectedDayItems.length > 0 && (
         <div
           data-testid="today-skipped-items-section"
           className="bg-slate-100/90 border border-dashed border-slate-300 rounded-3xl p-4 sm:p-5 space-y-2.5 animate-in fade-in"
@@ -649,13 +835,13 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
           <div className="flex items-center justify-between text-xs font-bold text-slate-600">
             <div className="flex items-center gap-1.5">
               <Ban className="w-4 h-4 text-amber-600" />
-              <span>이번 주 휴강·제외된 일정 ({skippedTodayItems.length}건)</span>
+              <span>이번 주 휴강·제외된 일정 ({skippedSelectedDayItems.length}건)</span>
             </div>
             <span className="text-[11px] text-slate-400">다음 주가 되면 원래대로 자동 복구됩니다</span>
           </div>
 
           <div className="space-y-2">
-            {skippedTodayItems.map((sk) => (
+            {skippedSelectedDayItems.map((sk) => (
               <div
                 key={sk.id}
                 className="flex items-center justify-between text-xs bg-white px-3.5 py-2.5 rounded-2xl border border-slate-200 shadow-2xs"
