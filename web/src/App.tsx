@@ -51,8 +51,10 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
     globalScheduleStore.getSelectedWeekday()
   );
 
-  const [pendingAwardDay, setPendingAwardDay] = useState<WeekdayNumber | null>(null);
-  const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  const [pinPrompt, setPinPrompt] = useState<{
+    reason?: string;
+    onConfirm?: () => void;
+  } | null>(null);
   const [isRewardModalOpen, setIsRewardModalOpen] = useState(false);
   const [localToast, setLocalToast] = useState<{ message: string; status: SyncStatus } | null>(
     null
@@ -194,7 +196,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
         onSync={() => triggerSync({ isManual: true })}
         onOpenPrint={handleOpenPrint}
         isParentMode={isParentMode}
-        onOpenParentPin={() => setIsPinModalOpen(true)}
+        onOpenParentPin={() => setPinPrompt({})}
         onLockParentMode={() => globalScheduleStore.lockParentMode()}
         onOpenRewardExchange={() => setIsRewardModalOpen(true)}
         availableHearts={availableHearts}
@@ -206,7 +208,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
         {activeTab === 'stars' ? (
           <StarRewardShopView
             store={globalScheduleStore}
-            onOpenParentPin={() => setIsPinModalOpen(true)}
+            onOpenParentPin={() => setPinPrompt({})}
             onOpenRewardExchange={() => setIsRewardModalOpen(true)}
           />
         ) : activeTab === 'today' ? (
@@ -226,9 +228,8 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
                 scope || (target ? 'master' : 'thisWeek')
               )
             }
-            onOpenParentPin={(day) => {
-              if (day) setPendingAwardDay(day as WeekdayNumber);
-              setIsPinModalOpen(true);
+            onRequestParentAuth={(reason, action) => {
+              setPinPrompt({ reason, onConfirm: action });
             }}
             onOpenRewardExchange={() => setIsRewardModalOpen(true)}
           />
@@ -245,17 +246,13 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
 
       {/* 6-Digit Master PIN Authentication Modal */}
       <ParentPinModal
-        isOpen={isPinModalOpen}
-        onClose={() => {
-          setIsPinModalOpen(false);
-          setPendingAwardDay(null);
-        }}
+        isOpen={pinPrompt !== null}
+        reason={pinPrompt?.reason}
+        onClose={() => setPinPrompt(null)}
         onSuccess={() => {
-          setIsPinModalOpen(false);
-          if (pendingAwardDay) {
-            globalScheduleStore.awardDailyStar(pendingAwardDay);
-            setPendingAwardDay(null);
-          }
+          const actionToRun = pinPrompt?.onConfirm;
+          setPinPrompt(null);
+          actionToRun?.();
         }}
         store={globalScheduleStore}
       />

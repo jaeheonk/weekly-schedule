@@ -726,6 +726,80 @@ describe('App & Hash Navigation (Seam 2)', () => {
         expect(createdWedItem?.weekday).toBe(3);
         expect(createdWedItem?.targetWeekKey).toBe(globalScheduleStore.getCurrentWeekKey());
       });
+
+      it('gates protected Today Schedule actions in Child Mode behind the 6-digit PIN modal with reason badges and immediately opens the requested modal or executes the action upon authentication (Issue 05)', async () => {
+        globalScheduleStore.setCurrentDate(new Date(2026, 10, 9)); // Monday
+        expect(globalScheduleStore.isParentMode()).toBe(false);
+
+        // Complete all Monday items and verify all except the first so we can test batch verify and star claiming in Child Mode
+        const monCheckables = globalScheduleStore
+          .getItemsForWeekday(1)
+          .filter((it) => globalScheduleStore.isItemCheckable(it));
+        for (const item of monCheckables) {
+          globalScheduleStore.toggleCompletion(item);
+        }
+        globalScheduleStore.unlockParentMode();
+        for (const item of monCheckables.slice(1)) {
+          globalScheduleStore.toggleParentVerification(item);
+        }
+        globalScheduleStore.lockParentMode();
+        expect(globalScheduleStore.isParentMode()).toBe(false);
+
+        render(<App syncOnMount={false} />);
+
+        const enterPin = () => {
+          for (const d of ['1', '6', '0', '1', '2', '5']) {
+            fireEvent.click(screen.getByTestId(`keypad-btn-${d}`));
+          }
+        };
+
+        // 1. In Child Mode, click "+ 이번 주 추가" -> opens PIN modal with "이번 주 일정 추가"
+        fireEvent.click(screen.getByTestId('today-add-schedule-btn'));
+        expect(screen.getByTestId('parent-pin-modal')).toBeInTheDocument();
+        expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('이번 주 일정 추가');
+        expect(screen.queryByTestId('schedule-edit-modal')).not.toBeInTheDocument();
+
+        // Cancel PIN modal -> edit modal does not open
+        fireEvent.click(screen.getByTestId('pin-modal-close-btn'));
+        expect(screen.queryByTestId('parent-pin-modal')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('schedule-edit-modal')).not.toBeInTheDocument();
+
+        // Click "+ 이번 주 추가" again and enter PIN -> switches to Parent Mode and immediately opens ScheduleEditModal!
+        fireEvent.click(screen.getByTestId('today-add-schedule-btn'));
+        enterPin();
+        expect(screen.getByTestId('parent-mode-indicator')).toBeInTheDocument();
+        expect(screen.getByTestId('schedule-edit-modal')).toBeInTheDocument();
+        fireEvent.click(screen.getByRole('button', { name: '취소' }));
+
+        // 2. Lock back to Child Mode and click hero "응원 보내기" -> opens PIN modal with "응원 하트 보내기", then immediately opens PraiseHeartModal on valid PIN
+        fireEvent.click(screen.getByTestId('mode-lock-button'));
+        expect(globalScheduleStore.isParentMode()).toBe(false);
+
+        fireEvent.click(screen.getByTestId('send-family-praise-btn'));
+        expect(screen.getByTestId('parent-pin-modal')).toBeInTheDocument();
+        expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('응원 하트 보내기');
+        expect(screen.queryByTestId('praise-heart-modal')).not.toBeInTheDocument();
+
+        enterPin();
+        expect(screen.getByTestId('praise-heart-modal')).toBeInTheDocument();
+        fireEvent.click(screen.getByTestId('praise-modal-close-btn'));
+
+        // 3. Lock back to Child Mode and click "모두 확인 + ❤️" -> opens PIN modal with "일괄 확인 및 하트 지급", then verifies the remaining item
+        fireEvent.click(screen.getByTestId('mode-lock-button'));
+        fireEvent.click(screen.getByTestId('verify-all-waiting-btn'));
+        expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('일괄 확인 및 하트 지급');
+        enterPin();
+        expect(globalScheduleStore.isParentVerified(monCheckables[0])).toBe(true);
+
+        // 4. Lock back to Child Mode and click claim daily star button -> opens PIN modal with "올클리어 스타 수여", then awards +1 star immediately on valid PIN
+        fireEvent.click(screen.getByTestId('mode-lock-button'));
+        const claimStarBtn = await screen.findByTestId('claim-daily-star-button');
+        fireEvent.click(claimStarBtn);
+        expect(screen.getByTestId('parent-pin-modal')).toBeInTheDocument();
+        expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('올클리어 스타 수여');
+        enterPin();
+        expect(await screen.findByTestId('star-celebration-modal')).toBeInTheDocument();
+      });
     });
   });
 });

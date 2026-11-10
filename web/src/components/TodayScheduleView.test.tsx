@@ -9,6 +9,7 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
 
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
     mockPlayChime.mockClear();
     // Fixed test date: Monday Nov 9, 2026 (2026-W46)
     store = new ScheduleStore({ currentDate: new Date(2026, 10, 9) });
@@ -1080,6 +1081,198 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       expect(screen.queryByTestId('today-empty-state')).not.toBeInTheDocument();
       expect(screen.getByTestId(`schedule-card-${itemToMove.id}`)).toBeInTheDocument();
       expect(screen.queryByTestId(`excluded-item-row-${itemToMove.id}`)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Child Mode Protected Parent Actions & Immediate PIN Execution (Issue 05)', () => {
+    const enterValidPin = () => {
+      for (const digit of ['1', '6', '0', '1', '2', '5']) {
+        fireEvent.click(screen.getByTestId(`keypad-btn-${digit}`));
+      }
+    };
+
+    it('exposes all protected parent action buttons in Child Mode with lock indicators and prompts for 6-digit PIN with specific reason badges, discarding pending action on cancel and executing immediately on valid PIN', () => {
+      // Ensure we start in Child Mode on Monday Nov 9, 2026
+      expect(store.isParentMode()).toBe(false);
+      const mockOpenPraise = vi.fn();
+      const mockOpenEdit = vi.fn();
+
+      const monCheckables = store
+        .getItemsForWeekday(1)
+        .filter((it) => store.isItemCheckable(it));
+      const [checkableItem, skippedItem] = monCheckables;
+
+      // Prepare state so all protected buttons are applicable:
+      // 1. Complete 1 checkable item (waiting for parent verification & eligible for completion reset)
+      store.toggleCompletion(checkableItem);
+      // 2. Time-adjust checkableItem for this week (triggers weekly override banner & inline revert button)
+      store.updateItem({ ...checkableItem, startHour: 20, endHour: 21 }, 'thisWeek');
+      // 3. Skip skippedItem for this week (triggers excluded items section restore button)
+      store.skipItemForThisWeek(skippedItem);
+
+      render(
+        <TodayScheduleView
+          store={store}
+          onPlayChime={mockPlayChime}
+          onOpenPraiseModal={mockOpenPraise}
+          onOpenEditModal={mockOpenEdit}
+        />
+      );
+
+      // Verify all protected buttons are visible in Child Mode!
+      const sendFamilyPraiseBtn = screen.getByTestId('send-family-praise-btn');
+      const topAddBtn = screen.getByTestId('today-add-schedule-btn');
+      const resetCompletionsBtn = screen.getByTestId('selected-day-reset-completions-btn');
+      const openResetAdjustmentsBtn = screen.getByTestId('open-reset-adjustments-dialog-btn');
+      const verifyAllWaitingBtn = screen.getByTestId('verify-all-waiting-btn');
+      const inlineRevertBtn = screen.getByTestId(`item-revert-override-btn-${checkableItem.id}`);
+      const itemEditBtn = screen.getByTestId(`item-edit-btn-${checkableItem.id}`);
+      const itemPraiseBtn = screen.getByTestId(`item-praise-btn-${checkableItem.id}`);
+      const restoreSkippedBtn = screen.getByTestId(`restore-skipped-btn-${skippedItem.id}`);
+
+      expect(sendFamilyPraiseBtn).toBeInTheDocument();
+      expect(topAddBtn).toBeInTheDocument();
+      expect(resetCompletionsBtn).toBeInTheDocument();
+      expect(openResetAdjustmentsBtn).toBeInTheDocument();
+      expect(verifyAllWaitingBtn).toBeInTheDocument();
+      expect(inlineRevertBtn).toBeInTheDocument();
+      expect(itemEditBtn).toBeInTheDocument();
+      expect(itemPraiseBtn).toBeInTheDocument();
+      expect(restoreSkippedBtn).toBeInTheDocument();
+
+      // 1. Click "모두 확인 + ❤️" in Child Mode -> opens PIN modal with reason "일괄 확인 및 하트 지급"
+      const initialHearts = store.getAvailableHearts();
+      fireEvent.click(verifyAllWaitingBtn);
+      expect(screen.getByTestId('parent-pin-modal')).toBeInTheDocument();
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('일괄 확인 및 하트 지급');
+      expect(store.isParentVerified(checkableItem)).toBe(false);
+
+      // Cancel PIN modal -> action is NOT executed and discarded
+      fireEvent.click(screen.getByTestId('pin-modal-close-btn'));
+      expect(screen.queryByTestId('parent-pin-modal')).not.toBeInTheDocument();
+      expect(store.isParentMode()).toBe(false);
+      expect(store.isParentVerified(checkableItem)).toBe(false);
+      expect(store.getAvailableHearts()).toBe(initialHearts);
+
+      // Click "모두 확인 + ❤️" again and enter valid PIN -> switches to Parent Mode & immediately verifies + awards heart!
+      fireEvent.click(verifyAllWaitingBtn);
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('일괄 확인 및 하트 지급');
+      enterValidPin();
+      expect(screen.queryByTestId('parent-pin-modal')).not.toBeInTheDocument();
+      expect(store.isParentMode()).toBe(true);
+      expect(store.isParentVerified(checkableItem)).toBe(true);
+      expect(store.getAvailableHearts()).toBe(initialHearts + 1);
+
+      // 2. Lock back to Child Mode and test "초기화" ("완료 체크 초기화")
+      act(() => {
+        store.lockParentMode();
+      });
+      expect(store.isParentMode()).toBe(false);
+
+      fireEvent.click(screen.getByTestId('selected-day-reset-completions-btn'));
+      expect(screen.getByTestId('parent-pin-modal')).toBeInTheDocument();
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('완료 체크 초기화');
+      expect(store.isCompleted(checkableItem)).toBe(true);
+
+      enterValidPin();
+      expect(store.isParentMode()).toBe(true);
+      expect(store.isCompleted(checkableItem)).toBe(false);
+      expect(store.isParentVerified(checkableItem)).toBe(false);
+
+      // 3. Lock back to Child Mode and test inline "원래대로" ("이번 주 조정 복구")
+      act(() => {
+        store.lockParentMode();
+      });
+      fireEvent.click(screen.getByTestId(`item-revert-override-btn-${checkableItem.id}`));
+      expect(screen.getByTestId('parent-pin-modal')).toBeInTheDocument();
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('이번 주 조정 복구');
+      expect(store.hasThisWeekOverride(checkableItem.id)).toBe(true);
+
+      enterValidPin();
+      expect(store.hasThisWeekOverride(checkableItem.id)).toBe(false);
+
+      // 4. Lock back to Child Mode and test banner "원래대로" ("이번 주 조정 복구") -> opens reset dialog immediately after PIN
+      act(() => {
+        store.lockParentMode();
+      });
+      fireEvent.click(screen.getByTestId('open-reset-adjustments-dialog-btn'));
+      expect(screen.getByTestId('parent-pin-modal')).toBeInTheDocument();
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('이번 주 조정 복구');
+      expect(screen.queryByTestId('reset-adjustments-confirm-dialog')).not.toBeInTheDocument();
+
+      enterValidPin();
+      expect(screen.getByTestId('reset-adjustments-confirm-dialog')).toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('cancel-reset-adjustments-dialog-btn'));
+
+      // 5. Lock back to Child Mode and test excluded item "원래대로 복구" ("제외 일정 복구")
+      act(() => {
+        store.lockParentMode();
+      });
+      fireEvent.click(screen.getByTestId(`restore-skipped-btn-${skippedItem.id}`));
+      expect(screen.getByTestId('parent-pin-modal')).toBeInTheDocument();
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('제외 일정 복구');
+      expect(store.isSkippedThisWeek(skippedItem.id)).toBe(true);
+
+      enterValidPin();
+      expect(store.isSkippedThisWeek(skippedItem.id)).toBe(false);
+
+      // 6. Lock back to Child Mode and test hero "응원 보내기" & card "응원하기" ("응원 하트 보내기")
+      act(() => {
+        store.lockParentMode();
+      });
+      fireEvent.click(screen.getByTestId('send-family-praise-btn'));
+      expect(screen.getByTestId('parent-pin-modal')).toBeInTheDocument();
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('응원 하트 보내기');
+      expect(mockOpenPraise).not.toHaveBeenCalled();
+
+      enterValidPin();
+      expect(mockOpenPraise).toHaveBeenCalledTimes(1);
+      expect(mockOpenPraise).toHaveBeenLastCalledWith(null);
+
+      act(() => {
+        store.lockParentMode();
+      });
+      const currentCheckable = store.getItemsForWeekday(1).find((it) => it.id === checkableItem.id)!;
+      fireEvent.click(screen.getByTestId(`item-praise-btn-${checkableItem.id}`));
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('응원 하트 보내기');
+      enterValidPin();
+      expect(mockOpenPraise).toHaveBeenCalledTimes(2);
+      expect(mockOpenPraise).toHaveBeenLastCalledWith(currentCheckable);
+
+      // 7. Lock back to Child Mode and test card "수정" ("일정 수정") & "+ 이번 주 추가" / empty state "이번 주 일정 추가하기" ("이번 주 일정 추가")
+      act(() => {
+        store.lockParentMode();
+      });
+      fireEvent.click(screen.getByTestId(`item-edit-btn-${checkableItem.id}`));
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('일정 수정');
+      expect(mockOpenEdit).not.toHaveBeenCalled();
+      enterValidPin();
+      expect(mockOpenEdit).toHaveBeenCalledTimes(1);
+      expect(mockOpenEdit).toHaveBeenLastCalledWith(currentCheckable);
+
+      act(() => {
+        store.lockParentMode();
+      });
+      fireEvent.click(screen.getByTestId('today-add-schedule-btn'));
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('이번 주 일정 추가');
+      enterValidPin();
+      expect(mockOpenEdit).toHaveBeenCalledTimes(2);
+      expect(mockOpenEdit).toHaveBeenLastCalledWith(null, 1, 'thisWeek');
+
+      // Switch to Wednesday (3), filter by 'free' (0 items) to show empty state in Child Mode
+      act(() => {
+        store.lockParentMode();
+      });
+      fireEvent.click(screen.getByTestId('weekday-btn-3'));
+      fireEvent.click(screen.getByTestId('category-chip-free'));
+      const emptyAddBtn = screen.getByTestId('empty-day-add-schedule-btn');
+      expect(emptyAddBtn).toBeInTheDocument();
+
+      fireEvent.click(emptyAddBtn);
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('이번 주 일정 추가');
+      enterValidPin();
+      expect(mockOpenEdit).toHaveBeenCalledTimes(3);
+      expect(mockOpenEdit).toHaveBeenLastCalledWith(null, 3, 'thisWeek');
     });
   });
 });

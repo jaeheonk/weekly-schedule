@@ -38,6 +38,7 @@ import { formatTimeRange } from '../domain/calendarUtils';
 import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
 import { playCompletionChime } from '../services/soundEffects';
 import { WeeklyStarStampBoardCard } from './WeeklyStarStampBoardCard';
+import { ParentPinModal } from './ParentPinModal';
 
 export interface TodayScheduleViewProps {
   items?: ScheduleItem[];
@@ -51,6 +52,7 @@ export interface TodayScheduleViewProps {
     scope?: ScheduleEditScope
   ) => void;
   onOpenParentPin?: (day?: WeekdayNumber) => void;
+  onRequestParentAuth?: (reason: string, action: () => void) => void;
   onOpenRewardExchange?: () => void;
 }
 
@@ -87,6 +89,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
   onOpenPraiseModal,
   onOpenEditModal,
   onOpenParentPin,
+  onRequestParentAuth,
   onOpenRewardExchange,
 }) => {
   const [, setRenderVersion] = useState(0);
@@ -96,6 +99,22 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
     useState<ScheduleCategoryType | null>(null);
   const [showingResetAdjustmentsDialog, setShowingResetAdjustmentsDialog] =
     useState<boolean>(false);
+  const [pinPrompt, setPinPrompt] = useState<{
+    reason: string;
+    onConfirm: () => void;
+  } | null>(null);
+
+  const performParentAction = (reason: string, action: () => void) => {
+    if (store.isParentMode()) {
+      action();
+      return;
+    }
+    if (onRequestParentAuth) {
+      onRequestParentAuth(reason, action);
+      return;
+    }
+    setPinPrompt({ reason, onConfirm: action });
+  };
 
   useEffect(() => {
     const unsubscribe = store.subscribe(() => {
@@ -302,17 +321,22 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                 )}
               </button>
 
-              {onOpenPraiseModal && (
-                <button
-                  type="button"
-                  data-testid="send-family-praise-btn"
-                  onClick={() => onOpenPraiseModal(null)}
-                  className="flex items-center gap-1 px-3 py-1 rounded-full bg-pink-500/90 hover:bg-pink-500 text-white text-xs font-bold border border-pink-300/40 shadow-xs transition-all active:scale-95 cursor-pointer"
-                >
+              <button
+                type="button"
+                data-testid="send-family-praise-btn"
+                data-locked={!isParentMode}
+                onClick={() =>
+                  performParentAction('응원 하트 보내기', () => onOpenPraiseModal?.(null))
+                }
+                className="flex items-center gap-1 px-3 py-1 rounded-full bg-pink-500/90 hover:bg-pink-500 text-white text-xs font-bold border border-pink-300/40 shadow-xs transition-all active:scale-95 cursor-pointer"
+              >
+                {isParentMode ? (
                   <Heart className="w-3.5 h-3.5 fill-white text-white" />
-                  <span>응원 보내기</span>
-                </button>
-              )}
+                ) : (
+                  <Lock className="w-3.5 h-3.5 text-white" />
+                )}
+                <span>응원 보내기</span>
+              </button>
 
               <div className="flex items-center gap-1.5 text-xs font-bold bg-white/15 px-3 py-1 rounded-full">
                 <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
@@ -480,32 +504,37 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
         </div>
       </div>
 
-      {/* Top Action Bar ("오늘" Return Button + Parent Mode Quick Actions) */}
-      {(selectedWeekday !== todayWeekday || (isParentMode && onOpenEditModal)) && (
-        <div className="flex items-center justify-end gap-2">
-          {selectedWeekday !== todayWeekday && (
-            <button
-              type="button"
-              data-testid="back-to-today-btn"
-              onClick={() => store.setSelectedWeekday(todayWeekday)}
-              className="flex items-center gap-1 px-3.5 py-2 rounded-2xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-xs border border-blue-200 shadow-2xs transition-all active:scale-95 cursor-pointer"
-            >
-              <span>오늘</span>
-            </button>
+      {/* Top Action Bar ("오늘" Return Button + Protected Quick Actions) */}
+      <div className="flex items-center justify-end gap-2">
+        {selectedWeekday !== todayWeekday && (
+          <button
+            type="button"
+            data-testid="back-to-today-btn"
+            onClick={() => store.setSelectedWeekday(todayWeekday)}
+            className="flex items-center gap-1 px-3.5 py-2 rounded-2xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-extrabold text-xs border border-blue-200 shadow-2xs transition-all active:scale-95 cursor-pointer"
+          >
+            <span>오늘</span>
+          </button>
+        )}
+        <button
+          type="button"
+          data-testid="today-add-schedule-btn"
+          data-locked={!isParentMode}
+          onClick={() =>
+            performParentAction('이번 주 일정 추가', () =>
+              onOpenEditModal?.(null, selectedWeekday, 'thisWeek')
+            )
+          }
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs border border-slate-300 shadow-xs transition-all active:scale-95 cursor-pointer"
+        >
+          {isParentMode ? (
+            <Plus className="w-3.5 h-3.5 text-blue-600" />
+          ) : (
+            <Lock className="w-3.5 h-3.5 text-slate-500" />
           )}
-          {isParentMode && onOpenEditModal && (
-            <button
-              type="button"
-              data-testid="today-add-schedule-btn"
-              onClick={() => onOpenEditModal(null, selectedWeekday, 'thisWeek')}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-2xl bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs border border-slate-300 shadow-xs transition-all active:scale-95 cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5 text-blue-600" />
-              <span>+ 이번 주 추가</span>
-            </button>
-          )}
-        </div>
-      )}
+          <span>+ 이번 주 추가</span>
+        </button>
+      </div>
 
       {/* ⭐ Weekly Star Stamp Board Card (Mon-Fri +1⭐ & Weekly Bonus +2⭐) */}
       <WeeklyStarStampBoardCard
@@ -517,8 +546,10 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
         onRequestAwardStar={(day) => {
           if (store.isParentMode()) {
             store.awardDailyStar(day);
-          } else if (onOpenParentPin) {
+          } else if (onOpenParentPin && !onRequestParentAuth) {
             onOpenParentPin(day);
+          } else {
+            performParentAction('올클리어 스타 수여', () => store.awardDailyStar(day));
           }
         }}
         selectedWeekday={selectedWeekday}
@@ -806,10 +837,19 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                 <button
                   type="button"
                   data-testid="selected-day-reset-completions-btn"
-                  onClick={() => store.resetCompletionsForWeekday(selectedWeekday, true)}
+                  data-locked={!isParentMode}
+                  onClick={() =>
+                    performParentAction('완료 체크 초기화', () =>
+                      store.resetCompletionsForWeekday(selectedWeekday, true)
+                    )
+                  }
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-slate-200/80 hover:bg-slate-300/80 text-slate-700 text-[11px] font-bold transition-colors cursor-pointer"
                 >
-                  <RotateCcw className="w-3 h-3" />
+                  {isParentMode ? (
+                    <RotateCcw className="w-3 h-3" />
+                  ) : (
+                    <Lock className="w-3 h-3" />
+                  )}
                   <span>초기화</span>
                 </button>
               )}
@@ -840,10 +880,19 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
             <button
               type="button"
               data-testid="open-reset-adjustments-dialog-btn"
-              onClick={() => setShowingResetAdjustmentsDialog(true)}
+              data-locked={!isParentMode}
+              onClick={() =>
+                performParentAction('이번 주 조정 복구', () =>
+                  setShowingResetAdjustmentsDialog(true)
+                )
+              }
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-orange-500 hover:bg-orange-600 text-white text-xs font-extrabold shadow-2xs transition-all active:scale-95 cursor-pointer shrink-0"
             >
-              <RotateCcw className="w-3 h-3" />
+              {isParentMode ? (
+                <RotateCcw className="w-3 h-3" />
+              ) : (
+                <Lock className="w-3 h-3" />
+              )}
               <span>원래대로</span>
             </button>
           </div>
@@ -865,7 +914,12 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
             <button
               type="button"
               data-testid="verify-all-waiting-btn"
-              onClick={() => store.verifyAllWaitingItems(selectedWeekday, true)}
+              data-locked={!isParentMode}
+              onClick={() =>
+                performParentAction('일괄 확인 및 하트 지급', () =>
+                  store.verifyAllWaitingItems(selectedWeekday, true)
+                )
+              }
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-2xs transition-all active:scale-95 cursor-pointer shrink-0"
             >
               {isParentMode ? (
@@ -889,19 +943,26 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
           <p className="text-xs text-slate-400">
             이번 주 보강·특별 일정을 추가하거나 아래에서 휴강된 일정을 복구해 보세요!
           </p>
-          {onOpenEditModal && (
-            <div className="pt-1">
-              <button
-                type="button"
-                data-testid="empty-day-add-schedule-btn"
-                onClick={() => onOpenEditModal(null, selectedWeekday, 'thisWeek')}
-                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition-all active:scale-95 cursor-pointer"
-              >
+          <div className="pt-1">
+            <button
+              type="button"
+              data-testid="empty-day-add-schedule-btn"
+              data-locked={!isParentMode}
+              onClick={() =>
+                performParentAction('이번 주 일정 추가', () =>
+                  onOpenEditModal?.(null, selectedWeekday, 'thisWeek')
+                )
+              }
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-xs transition-all active:scale-95 cursor-pointer"
+            >
+              {isParentMode ? (
                 <Plus className="w-3.5 h-3.5" />
-                <span>이번 주 일정 추가하기</span>
-              </button>
-            </div>
-          )}
+              ) : (
+                <Lock className="w-3.5 h-3.5" />
+              )}
+              <span>이번 주 일정 추가하기</span>
+            </button>
+          </div>
         </div>
       ) : (
         <div className="space-y-3">
@@ -1006,10 +1067,19 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                               <button
                                 type="button"
                                 data-testid={`item-revert-override-btn-${item.id}`}
-                                onClick={() => store.revertThisWeekOverride(item.id)}
+                                data-locked={!isParentMode}
+                                onClick={() =>
+                                  performParentAction('이번 주 조정 복구', () =>
+                                    store.revertThisWeekOverride(item.id)
+                                  )
+                                }
                                 className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full border border-blue-200 transition-colors cursor-pointer"
                               >
-                                <RotateCcw className="w-2.5 h-2.5 text-blue-600" />
+                                {isParentMode ? (
+                                  <RotateCcw className="w-2.5 h-2.5 text-blue-600" />
+                                ) : (
+                                  <Lock className="w-2.5 h-2.5 text-blue-600" />
+                                )}
                                 <span>원래대로</span>
                               </button>
                             )}
@@ -1173,58 +1243,70 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                       </div>
                     )}
 
-                    {/* Parent Mode Actions (Edit, Stamp & Cheer) */}
-                    {isParentMode && (
-                      <div className="flex items-center gap-2 mt-3 pt-2.5 border-t border-slate-100 justify-end">
-                        {onOpenEditModal && (
-                          <button
-                            type="button"
-                            data-testid={`item-edit-btn-${item.id}`}
-                            onClick={() => onOpenEditModal(item)}
-                            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-200 transition-colors"
-                          >
-                            <Edit3 className="w-3.5 h-3.5 text-slate-600" />
-                            <span>수정</span>
-                          </button>
+                    {/* Protected Parent Actions (Edit, Cheer & Parent Stamp) */}
+                    <div className="flex flex-wrap items-center gap-2 mt-3 pt-2.5 border-t border-slate-100 justify-end">
+                      <button
+                        type="button"
+                        data-testid={`item-edit-btn-${item.id}`}
+                        data-locked={!isParentMode}
+                        onClick={() =>
+                          performParentAction('일정 수정', () => onOpenEditModal?.(item))
+                        }
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-200 transition-colors cursor-pointer"
+                      >
+                        {isParentMode ? (
+                          <Edit3 className="w-3.5 h-3.5 text-slate-600" />
+                        ) : (
+                          <Lock className="w-3.5 h-3.5 text-slate-500" />
                         )}
+                        <span>수정</span>
+                      </button>
 
-                        {isCheckable && onOpenPraiseModal && (
-                          <button
-                            type="button"
-                            data-testid={`item-praise-btn-${item.id}`}
-                            onClick={() => onOpenPraiseModal(item)}
-                            className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-pink-50 hover:bg-pink-100 text-pink-700 font-bold text-xs border border-pink-200/60 transition-colors"
-                          >
+                      {isCheckable && (
+                        <button
+                          type="button"
+                          data-testid={`item-praise-btn-${item.id}`}
+                          data-locked={!isParentMode}
+                          onClick={() =>
+                            performParentAction('응원 하트 보내기', () =>
+                              onOpenPraiseModal?.(item)
+                            )
+                          }
+                          className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-pink-50 hover:bg-pink-100 text-pink-700 font-bold text-xs border border-pink-200/60 transition-colors cursor-pointer"
+                        >
+                          {isParentMode ? (
                             <Heart className="w-3.5 h-3.5 text-pink-600 fill-pink-600" />
-                            <span>응원하기</span>
-                          </button>
-                        )}
+                          ) : (
+                            <Lock className="w-3.5 h-3.5 text-pink-600" />
+                          )}
+                          <span>응원하기</span>
+                        </button>
+                      )}
 
-                        {isCheckable && (
-                          <button
-                            type="button"
-                            data-testid={`item-parent-stamp-btn-${item.id}`}
-                            onClick={() => handleParentStampClick(item)}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition-all ${
-                              isVerified
-                                ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
-                                : store.canParentVerify(item)
-                                ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-300 shadow-sm'
-                                : 'bg-slate-100 text-slate-500 hover:bg-slate-200/80 border border-slate-200'
-                            }`}
-                          >
-                            <Award className="w-4 h-4" />
-                            <span>
-                              {isVerified
-                                ? '참 잘했어요 도장 날인됨'
-                                : store.canParentVerify(item)
-                                ? '부모 확인 도장 찍기'
-                                : '아이 완료 대기 중'}
-                            </span>
-                          </button>
-                        )}
-                      </div>
-                    )}
+                      {isParentMode && isCheckable && (
+                        <button
+                          type="button"
+                          data-testid={`item-parent-stamp-btn-${item.id}`}
+                          onClick={() => handleParentStampClick(item)}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                            isVerified
+                              ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
+                              : store.canParentVerify(item)
+                              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-300 shadow-sm'
+                              : 'bg-slate-100 text-slate-500 hover:bg-slate-200/80 border border-slate-200'
+                          }`}
+                        >
+                          <Award className="w-4 h-4" />
+                          <span>
+                            {isVerified
+                              ? '참 잘했어요 도장 날인됨'
+                              : store.canParentVerify(item)
+                              ? '부모 확인 도장 찍기'
+                              : '아이 완료 대기 중'}
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1281,10 +1363,19 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                   <button
                     type="button"
                     data-testid={`restore-skipped-btn-${masterItem.id}`}
-                    onClick={() => store.revertThisWeekOverride(masterItem.id)}
+                    data-locked={!isParentMode}
+                    onClick={() =>
+                      performParentAction('제외 일정 복구', () =>
+                        store.revertThisWeekOverride(masterItem.id)
+                      )
+                    }
                     className="flex items-center gap-1 text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-full border border-blue-200 transition-colors cursor-pointer shrink-0"
                   >
-                    <RotateCcw className="w-3.5 h-3.5 text-blue-600" />
+                    {isParentMode ? (
+                      <RotateCcw className="w-3.5 h-3.5 text-blue-600" />
+                    ) : (
+                      <Lock className="w-3.5 h-3.5 text-blue-600" />
+                    )}
                     <span>원래대로 복구</span>
                   </button>
                 </div>
@@ -1318,8 +1409,10 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                   type="button"
                   data-testid="confirm-reset-selected-day-adjustments-btn"
                   onClick={() => {
-                    store.resetThisWeekAdjustments(selectedWeekday);
-                    setShowingResetAdjustmentsDialog(false);
+                    performParentAction('이번 주 조정 복구', () => {
+                      store.resetThisWeekAdjustments(selectedWeekday);
+                      setShowingResetAdjustmentsDialog(false);
+                    });
                   }}
                   className="w-full py-2.5 px-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-extrabold shadow-xs transition-all cursor-pointer"
                 >
@@ -1331,8 +1424,10 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                 type="button"
                 data-testid="confirm-reset-all-week-adjustments-btn"
                 onClick={() => {
-                  store.resetThisWeekAdjustments();
-                  setShowingResetAdjustmentsDialog(false);
+                  performParentAction('이번 주 조정 복구', () => {
+                    store.resetThisWeekAdjustments();
+                    setShowingResetAdjustmentsDialog(false);
+                  });
                 }}
                 className="w-full py-2.5 px-4 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs sm:text-sm font-extrabold transition-all cursor-pointer"
               >
@@ -1350,6 +1445,21 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Standalone 6-Digit Master PIN Authentication Modal when not delegated to App */}
+      {!onRequestParentAuth && (
+        <ParentPinModal
+          isOpen={pinPrompt !== null}
+          reason={pinPrompt?.reason}
+          store={store}
+          onClose={() => setPinPrompt(null)}
+          onSuccess={() => {
+            const actionToRun = pinPrompt?.onConfirm;
+            setPinPrompt(null);
+            actionToRun?.();
+          }}
+        />
       )}
     </div>
   );
