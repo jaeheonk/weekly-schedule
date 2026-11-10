@@ -1,4 +1,9 @@
 import {
+  clearParentPasskey,
+  loadParentPasskey,
+  type StoredParentPasskey,
+} from '../services/parentPasskey';
+import {
   ScheduleItem,
   WeekdayNumber,
   WeekKey,
@@ -452,8 +457,44 @@ export class ScheduleStore {
       } catch {
         // ignore
       }
+      // 아이 폰으로 지정되면 생체인증을 절대 허용하지 않는다 (아이 본인 얼굴로 뚫릴 수 있음)
+      clearParentPasskey();
     }
     this.notify();
+  }
+
+  // MARK: - 부모님 폰 Face ID / Touch ID (WebAuthn 패스키)
+  // 클라이언트 측 잠금일 뿐이며 서버 검증은 없다 (6자리 PIN과 같은 신뢰 수준).
+  // 크리덴셜 ID는 기기별 localStorage에만 있고 클라우드 동기화 스냅샷에 포함하지 않는다.
+
+  /** 이 기기에 부모님 폰 Face ID가 등록되어 있는지 (등록 = 부모님 폰으로 지정) */
+  public isParentPasskeyEnabled(): boolean {
+    return loadParentPasskey() !== null;
+  }
+
+  public getParentPasskey(): StoredParentPasskey | null {
+    return loadParentPasskey();
+  }
+
+  /** 이 기기의 Face ID 부모 인증을 끈다 */
+  public disableParentPasskey(): void {
+    clearParentPasskey();
+    this.notify();
+  }
+
+  /** Face ID 등록 직후 UI 갱신용 */
+  public notifyParentPasskeyChanged(): void {
+    this.notify();
+  }
+
+  /**
+   * Face ID / Touch ID 사용자 검증 성공 시 PIN 성공과 동일하게 부모 모드를 연다.
+   * PIN 실패 횟수/잠금 상태는 건드리지 않는다.
+   */
+  public unlockParentModeWithPasskey(): boolean {
+    if (!this.isParentPasskeyEnabled() || this.isPinLockedOut()) return false;
+    this.unlockParentMode();
+    return true;
   }
 
   private loadPinSecurityState(): void {
