@@ -146,4 +146,78 @@ describe('SchedulePrintModal Component (Seam 2)', () => {
 
     expect(handleClose).toHaveBeenCalledTimes(1);
   });
+
+  it('merges 2-slot schedules into single cells when mergeLongBlocks is true, and splits when toggled off', () => {
+    // Switch to parent mode to add master item
+    mockStore.verifyParentPin('160125');
+
+    // Add a 10:30~13:30 study item on Friday (spans 10:30 and 12:00 base slots, exactly 2 slots)
+    mockStore.addItem(
+      {
+        id: 'fri-study-1',
+        title: '오전 집중 탐구',
+        weekday: 5,
+        startHour: 10,
+        startMinute: 30,
+        endHour: 13,
+        endMinute: 30,
+        category: 'study',
+        iconName: 'book',
+        subTasks: [],
+        note: '',
+        isNotificationEnabled: false,
+        notificationLeadMinutes: [],
+        updatedAt: 1000,
+      },
+      [5],
+      'master'
+    );
+
+    render(
+      <SchedulePrintModal
+        isOpen={true}
+        onClose={vi.fn()}
+        store={mockStore}
+      />
+    );
+
+    const mergeToggle = screen.getByLabelText(/장기 일정 셀 하나로 병합하기/i);
+    // By default, mergeLongBlocks is true
+    expect(mergeToggle).toBeChecked();
+
+    const assertMergedPresentation = () => {
+      // Wednesday School Soccer (15:00~17:00, category: sports) should appear as 1 cell, not split
+      expect(screen.getAllByText('학교 축구')).toHaveLength(1);
+      expect(screen.queryByText('(~17:00)')).not.toBeInTheDocument();
+
+      // Sunday Orchestra (16:00~17:30, category: music) should appear as 1 cell
+      expect(screen.getAllByText('오케스트라 연습')).toHaveLength(1);
+      expect(screen.queryByText('(~17:30)')).not.toBeInTheDocument();
+
+      // Friday study item spanning 10:30~13:30 (category: study, spans 10:30 and 12:00 base slots)
+      expect(screen.getAllByText('오전 집중 탐구')).toHaveLength(1);
+      expect(screen.queryByText('(~13:30)')).not.toBeInTheDocument();
+    };
+
+    // 1. In merged state:
+    assertMergedPresentation();
+
+    // 2. Toggle OFF mergeLongBlocks
+    fireEvent.click(mergeToggle);
+    expect(mergeToggle).not.toBeChecked();
+
+    // In split state: each slot receives its own block with continuation marker where applicable
+    expect(screen.getAllByText('학교 축구')).toHaveLength(2);
+
+    expect(screen.getAllByText('오케스트라 연습')).toHaveLength(2);
+    expect(screen.getByText('(~17:30)')).toBeInTheDocument();
+
+    expect(screen.getAllByText('오전 집중 탐구')).toHaveLength(2);
+
+    // 3. Toggle back ON
+    fireEvent.click(mergeToggle);
+    expect(mergeToggle).toBeChecked();
+
+    assertMergedPresentation();
+  });
 });

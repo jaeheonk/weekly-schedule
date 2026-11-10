@@ -175,19 +175,11 @@ export function getActiveItemsForSlot(
 }
 
 export function shouldMergeAcrossSlots(
-  item: ScheduleItem,
+  _item: ScheduleItem,
   spannedSlotCount: number,
   mergeLongBlocks: boolean
 ): boolean {
-  if (!mergeLongBlocks || spannedSlotCount < 2) return false;
-  if (spannedSlotCount >= 3) return true;
-  if (item.category === 'free') return true;
-  if (item.subTasks && item.subTasks.length >= 3) return true;
-  const duration = getItemDurationMinutes(item);
-  if (duration >= 120 && (item.weekday === 6 || item.weekday === 7)) {
-    return true;
-  }
-  return false;
+  return mergeLongBlocks && spannedSlotCount >= 2;
 }
 
 export function buildPrintColumnBlocks(
