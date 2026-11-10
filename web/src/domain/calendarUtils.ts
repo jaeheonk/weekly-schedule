@@ -80,3 +80,14 @@ export function compareScheduleItemsByTime(
   const bMin = b.startHour * 60 + b.startMinute;
   return aMin - bMin;
 }
+
+/**
+ * Formats epoch timestamp (in seconds) into friendly Korean month/day/time string (e.g. "11월 10일 10:15")
+ */
+export function formatKoreanDateTime(ts: number): string {
+  const d = new Date(ts * 1000);
+  return `${d.getMonth() + 1}월 ${d.getDate()}일 ${d.getHours().toString().padStart(2, '0')}:${d
+    .getMinutes()
+    .toString()
+    .padStart(2, '0')}`;
+}

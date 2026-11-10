@@ -246,4 +246,137 @@ describe('RewardExchangeModal (Seam 2 / Issue 01)', () => {
     expect(screen.getByTestId('heart-range-slider')).toBeDisabled();
     expect(screen.getByTestId('quick-chip-all-in')).toBeDisabled();
   });
+
+  describe('Redemption History & Refunds (Seam 2 / Issue 03)', () => {
+    it('displays friendly empty state when there are no recent redemptions', () => {
+      render(<RewardExchangeModal isOpen={true} onClose={vi.fn()} store={store} />);
+
+      expect(screen.getByTestId('redemption-history-section')).toBeInTheDocument();
+      expect(screen.getByTestId('redemption-history-empty')).toBeInTheDocument();
+      expect(screen.getByTestId('redemption-history-empty')).toHaveTextContent(
+        '아직 교환한 보상 내역이 없어요'
+      );
+    });
+
+    it('renders redemption history items with title, heart cost, timestamp, and role badge', () => {
+      store.sendFamilyPraise({
+        hearts: 50,
+        sticker: 'heart',
+        message: '하트 충전',
+      });
+      // Redeem in child mode
+      store.redeemReward('아이스크림', 5);
+
+      // Redeem in parent mode
+      store.unlockParentMode();
+      store.redeemReward('주말 나들이', 30);
+
+      render(<RewardExchangeModal isOpen={true} onClose={vi.fn()} store={store} />);
+
+      expect(screen.queryByTestId('redemption-history-empty')).not.toBeInTheDocument();
+
+      const redemptions = store.getRewardRedemptions();
+      expect(redemptions).toHaveLength(2);
+
+      // Check newest item (주말 나들이)
+      const outingItem = screen.getByTestId(`redemption-item-${redemptions[0].id}`);
+      expect(outingItem).toBeInTheDocument();
+      expect(screen.getByTestId(`redemption-title-${redemptions[0].id}`)).toHaveTextContent('주말 나들이');
+      expect(screen.getByTestId(`redemption-hearts-${redemptions[0].id}`)).toHaveTextContent('-30개');
+      expect(screen.getByTestId(`redemption-role-${redemptions[0].id}`)).toHaveTextContent('부모');
+
+      // Check older item (아이스크림)
+      const iceItem = screen.getByTestId(`redemption-item-${redemptions[1].id}`);
+      expect(iceItem).toBeInTheDocument();
+      expect(screen.getByTestId(`redemption-title-${redemptions[1].id}`)).toHaveTextContent('아이스크림');
+      expect(screen.getByTestId(`redemption-hearts-${redemptions[1].id}`)).toHaveTextContent('-5개');
+      expect(screen.getByTestId(`redemption-role-${redemptions[1].id}`)).toHaveTextContent('아이');
+    });
+
+    it('does not display refund button in child mode', () => {
+      store.sendFamilyPraise({
+        hearts: 50,
+        sticker: 'heart',
+        message: '하트 충전',
+      });
+      store.redeemReward('아이스크림', 5);
+
+      const redemptions = store.getRewardRedemptions();
+      render(<RewardExchangeModal isOpen={true} onClose={vi.fn()} store={store} />);
+
+      expect(screen.queryByTestId(`refund-btn-${redemptions[0].id}`)).not.toBeInTheDocument();
+    });
+
+    it('displays refund button in parent mode, prompts confirmation modal, and cancels if rejected', () => {
+      store.unlockParentMode();
+      store.sendFamilyPraise({
+        hearts: 50,
+        sticker: 'heart',
+        message: '하트 충전',
+      });
+      store.redeemReward('게임 30분', 10);
+
+      const redemptions = store.getRewardRedemptions();
+      render(<RewardExchangeModal isOpen={true} onClose={vi.fn()} store={store} />);
+
+      const refundBtn = screen.getByTestId(`refund-btn-${redemptions[0].id}`);
+      expect(refundBtn).toBeInTheDocument();
+
+      // Click refund button -> opens confirmation dialog
+      fireEvent.click(refundBtn);
+      const confirmDialog = screen.getByTestId('refund-confirm-dialog');
+      expect(confirmDialog).toBeInTheDocument();
+      expect(confirmDialog).toHaveTextContent('게임 30분');
+      expect(confirmDialog).toHaveTextContent('하트 10개');
+
+      // Click cancel in confirmation dialog
+      const cancelBtn = screen.getByTestId('cancel-refund-btn');
+      fireEvent.click(cancelBtn);
+
+      expect(screen.queryByTestId('refund-confirm-dialog')).not.toBeInTheDocument();
+      // Redemption should still exist
+      expect(store.getRewardRedemptions()).toHaveLength(1);
+      expect(screen.getByTestId(`redemption-item-${redemptions[0].id}`)).toBeInTheDocument();
+    });
+
+    it('executes refund upon confirmation in parent mode, updates available balance and removes item from list', () => {
+      store.unlockParentMode();
+      store.sendFamilyPraise({
+        hearts: 50,
+        sticker: 'heart',
+        message: '하트 충전',
+      });
+      store.redeemReward('선물 교환', 20);
+
+      const toasts: string[] = [];
+      store.onToast((msg) => toasts.push(msg));
+
+      const redemptions = store.getRewardRedemptions();
+      render(<RewardExchangeModal isOpen={true} onClose={vi.fn()} store={store} />);
+
+      expect(screen.getByTestId('available-hearts-value')).toHaveTextContent('30');
+      expect(screen.getByTestId('total-spent-hearts')).toHaveTextContent('20');
+
+      // Click refund button
+      fireEvent.click(screen.getByTestId(`refund-btn-${redemptions[0].id}`));
+
+      // Confirm refund
+      const confirmBtn = screen.getByTestId('confirm-refund-btn');
+      fireEvent.click(confirmBtn);
+
+      // Confirmation dialog should close
+      expect(screen.queryByTestId('refund-confirm-dialog')).not.toBeInTheDocument();
+
+      // Item should be removed and empty state shown
+      expect(screen.queryByTestId(`redemption-item-${redemptions[0].id}`)).not.toBeInTheDocument();
+      expect(screen.getByTestId('redemption-history-empty')).toBeInTheDocument();
+
+      // Hero balance card should reflect restored hearts
+      expect(screen.getByTestId('available-hearts-value')).toHaveTextContent('50');
+      expect(screen.getByTestId('total-spent-hearts')).toHaveTextContent('0');
+
+      // Toast emitted
+      expect(toasts).toContain('↩️ [선물 교환] 교환이 취소되어 하트 20개가 복구되었어요.');
+    });
+  });
 });

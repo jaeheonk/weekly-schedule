@@ -1138,6 +1138,24 @@ export class ScheduleStore {
     return true;
   }
 
+  public refundRewardRedemption(id: string): boolean {
+    if (!this.isParentMode()) {
+      return false;
+    }
+    const index = this.rewardRedemptions.findIndex((r) => r.id === id);
+    if (index === -1) {
+      return false;
+    }
+    const [removed] = this.rewardRedemptions.splice(index, 1);
+    this.saveSnapshotMeta();
+    this.notify();
+    this.emitToast(
+      `↩️ [${removed.title}] 교환이 취소되어 하트 ${removed.hearts}개가 복구되었어요.`,
+      'success'
+    );
+    return true;
+  }
+
   public getCompletionStats(
     target: WeekdayNumber | ScheduleItem[],
     weekKey?: WeekKey

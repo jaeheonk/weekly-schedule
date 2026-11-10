@@ -451,6 +451,60 @@ describe('App & Hash Navigation (Seam 2)', () => {
 
         expect(screen.getByTestId('header-hearts-badge')).toHaveTextContent('10');
       });
+
+      it('allows parent to view redemption history in RewardExchangeModal and refund a redemption to restore balance end-to-end', async () => {
+        globalScheduleStore.setCurrentDate(new Date(2026, 10, 9));
+        globalScheduleStore.unlockParentMode();
+        globalScheduleStore.sendFamilyPraise({
+          hearts: 30,
+          sticker: 'heart',
+          message: '수고했어!',
+        });
+        globalScheduleStore.redeemReward('게임 30분', 10);
+
+        render(<App syncOnMount={false} />);
+
+        // Initially 20 available hearts in header badge
+        expect(screen.getByTestId('header-hearts-badge')).toHaveTextContent('20');
+
+        // Click header badge to open modal
+        fireEvent.click(screen.getByTestId('header-hearts-badge'));
+
+        const redemptions = globalScheduleStore.getRewardRedemptions();
+        expect(redemptions).toHaveLength(1);
+
+        // Redemption history item is visible
+        const historyItem = screen.getByTestId(`redemption-item-${redemptions[0].id}`);
+        expect(historyItem).toBeInTheDocument();
+        expect(screen.getByTestId(`redemption-title-${redemptions[0].id}`)).toHaveTextContent('게임 30분');
+        expect(screen.getByTestId(`redemption-hearts-${redemptions[0].id}`)).toHaveTextContent('-10개');
+
+        // Click refund button
+        const refundBtn = screen.getByTestId(`refund-btn-${redemptions[0].id}`);
+        fireEvent.click(refundBtn);
+
+        // Confirm dialog appears
+        expect(screen.getByTestId('refund-confirm-dialog')).toBeInTheDocument();
+
+        // Click confirm refund
+        fireEvent.click(screen.getByTestId('confirm-refund-btn'));
+
+        // Dialog closes, item is removed, and empty state is rendered
+        await waitFor(() => {
+          expect(screen.queryByTestId('refund-confirm-dialog')).not.toBeInTheDocument();
+        });
+        expect(screen.queryByTestId(`redemption-item-${redemptions[0].id}`)).not.toBeInTheDocument();
+        expect(screen.getByTestId('redemption-history-empty')).toBeInTheDocument();
+
+        // Balance restored in both modal hero and header badge to 30
+        expect(screen.getByTestId('available-hearts-value')).toHaveTextContent('30');
+        expect(screen.getByTestId('header-hearts-badge')).toHaveTextContent('30');
+
+        // Toast appears
+        const toast = await screen.findByTestId('sync-toast');
+        expect(toast).toHaveTextContent('게임 30분');
+        expect(toast).toHaveTextContent('하트 10개가 복구되었어요');
+      });
     });
   });
 });

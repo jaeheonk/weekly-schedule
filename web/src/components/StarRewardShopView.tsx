@@ -17,6 +17,7 @@ import { WeeklyStarStampBoardCard } from './WeeklyStarStampBoardCard';
 import { ParentPinModal } from './ParentPinModal';
 import { StarRewardPreset, StarRedemptionRequest } from '../types/snapshot';
 import { WeekdayNumber } from '../types/schedule';
+import { formatKoreanDateTime } from '../domain/calendarUtils';
 
 export interface StarRewardShopViewProps {
   store?: ScheduleStore;
@@ -117,13 +118,7 @@ export const StarRewardShopView: React.FC<StarRewardShopViewProps> = ({
     setNewCost(1);
   };
 
-  const formatTimestamp = (ts: number): string => {
-    const d = new Date(ts * 1000);
-    return `${d.getMonth() + 1}월 ${d.getDate()}일 ${d.getHours().toString().padStart(2, '0')}:${d
-      .getMinutes()
-      .toString()
-      .padStart(2, '0')}`;
-  };
+  const formatTimestamp = formatKoreanDateTime;
 
   return (
     <div data-testid="star-reward-shop-view" className="max-w-4xl mx-auto px-4 py-6 space-y-5">

@@ -6,6 +6,7 @@ import { deterministicUUID } from './defaultSchedule';
 describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
   beforeEach(() => {
     localStorage.clear();
+    sessionStorage.clear();
   });
 
   describe('CalendarUtils', () => {
@@ -956,6 +957,78 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(redemptions[49].title).toBe('보상 #6');
       expect(store.getTotalSpentHearts()).toBe(50);
       expect(store.getAvailableHearts()).toBe(50);
+    });
+
+    it('refunds and cancels reward redemption, restores available balance, emits toast, and notifies subscribers', () => {
+      const store = new ScheduleStore();
+      let notifyCount = 0;
+      store.subscribe(() => {
+        notifyCount += 1;
+      });
+
+      const toasts: Array<{ message: string; status?: string }> = [];
+      store.onToast((msg, status) => {
+        toasts.push({ message: msg, status });
+      });
+
+      store.sendFamilyPraise({
+        hearts: 30,
+        sticker: 'heart',
+        message: '하트 30개 충전',
+      });
+
+      expect(store.getAvailableHearts()).toBe(30);
+
+      // Redeem two rewards
+      expect(store.redeemReward('아이스크림', 5)).toBe(true);
+      expect(store.redeemReward('게임 30분', 10)).toBe(true);
+
+      expect(store.getAvailableHearts()).toBe(15);
+      expect(store.getTotalSpentHearts()).toBe(15);
+
+      const redemptions = store.getRewardRedemptions();
+      expect(redemptions).toHaveLength(2);
+      const gameRedemption = redemptions[0]; // '게임 30분' (newest)
+      const iceCreamRedemption = redemptions[1]; // '아이스크림'
+
+      const initialNotifyCount = notifyCount;
+      const initialToastCount = toasts.length;
+
+      // In child mode, refund attempt is rejected
+      expect(store.isParentMode()).toBe(false);
+      expect(store.refundRewardRedemption(gameRedemption.id)).toBe(false);
+      expect(store.getAvailableHearts()).toBe(15);
+      expect(notifyCount).toBe(initialNotifyCount);
+      expect(toasts.length).toBe(initialToastCount);
+
+      // In parent mode, refund succeeds
+      store.unlockParentMode();
+      const parentNotifyCount = notifyCount;
+      const parentToastCount = toasts.length;
+
+      const refundSuccess = store.refundRewardRedemption(gameRedemption.id);
+      expect(refundSuccess).toBe(true);
+
+      // Remaining redemptions should only have iceCreamRedemption
+      const remainingRedemptions = store.getRewardRedemptions();
+      expect(remainingRedemptions).toHaveLength(1);
+      expect(remainingRedemptions[0].id).toBe(iceCreamRedemption.id);
+
+      // Hearts balance restored
+      expect(store.getTotalSpentHearts()).toBe(5);
+      expect(store.getAvailableHearts()).toBe(25);
+
+      // Notification and toast verification
+      expect(notifyCount).toBe(parentNotifyCount + 1);
+      expect(toasts.length).toBe(parentToastCount + 1);
+      expect(toasts[toasts.length - 1].message).toBe(
+        '↩️ [게임 30분] 교환이 취소되어 하트 10개가 복구되었어요.'
+      );
+      expect(toasts[toasts.length - 1].status).toBe('success');
+
+      // Attempting to refund non-existent redemption returns false
+      expect(store.refundRewardRedemption('non-existent-id')).toBe(false);
+      expect(store.getAvailableHearts()).toBe(25);
     });
   });
 });

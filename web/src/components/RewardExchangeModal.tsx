@@ -8,11 +8,18 @@ import {
   PlusCircle,
   ShieldCheck,
   User,
+  History,
+  RotateCcw,
 } from 'lucide-react';
 import { ScheduleStore } from '../domain/scheduleStore';
-import { RewardPreset, DEFAULT_REWARD_PRESETS } from '../types/snapshot';
+import {
+  RewardPreset,
+  DEFAULT_REWARD_PRESETS,
+  HeartRewardRedemption,
+} from '../types/snapshot';
 import { playCompletionChime } from '../services/soundEffects';
 import { ParentPinModal } from './ParentPinModal';
+import { formatKoreanDateTime } from '../domain/calendarUtils';
 
 export interface RewardExchangeModalProps {
   isOpen: boolean;
@@ -25,15 +32,28 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
   onClose,
   store,
 }) => {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    return store.subscribe(() => {
+      setTick((t) => t + 1);
+    });
+  }, [store]);
+
   const presets: RewardPreset[] = store.getRewardPresets();
   const availableHearts = store.getAvailableHearts();
   const totalEarnedHearts = store.getTotalEarnedHearts();
   const totalSpentHearts = store.getTotalSpentHearts();
   const isParentMode = store.isParentMode();
+  const redemptions = store
+    .getRewardRedemptions()
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, 50);
 
   const [customTitle, setCustomTitle] = useState<string>('');
   const [heartsToSpend, setHeartsToSpend] = useState<number>(10);
   const [isPinModalOpen, setIsPinModalOpen] = useState<boolean>(false);
+  const [pendingRefund, setPendingRefund] = useState<HeartRewardRedemption | null>(null);
 
   // Initialize form with the first preset when opened
   useEffect(() => {
@@ -86,6 +106,21 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
 
   const handleQuickChip = (count: number) => {
     setHeartsToSpend(count);
+  };
+
+  const handleRefundClick = (redemption: HeartRewardRedemption) => {
+    setPendingRefund(redemption);
+  };
+
+  const handleConfirmRefund = () => {
+    if (pendingRefund) {
+      store.refundRewardRedemption(pendingRefund.id);
+      setPendingRefund(null);
+    }
+  };
+
+  const handleCancelRefund = () => {
+    setPendingRefund(null);
   };
 
   const executeRedemption = () => {
@@ -447,8 +482,154 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
               </span>
             </button>
           </form>
+
+          {/* 4. Recent Redemption History Section */}
+          <div
+            data-testid="redemption-history-section"
+            className="space-y-3 pt-2 border-t border-slate-100"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <History className="w-4 h-4 text-slate-500" />
+                <h3 className="text-xs sm:text-sm font-bold text-slate-700">
+                  최근 교환 내역 ({redemptions.length}건)
+                </h3>
+              </div>
+              <span className="text-[11px] text-slate-400 font-medium">
+                최신순 최대 50건
+              </span>
+            </div>
+
+            {redemptions.length === 0 ? (
+              <div
+                data-testid="redemption-history-empty"
+                className="p-6 rounded-2xl bg-slate-50/70 border border-dashed border-slate-200 text-center space-y-1"
+              >
+                <p className="text-2xl">🎁</p>
+                <p className="text-xs font-bold text-slate-600">
+                  아직 교환한 보상 내역이 없어요
+                </p>
+                <p className="text-[11px] text-slate-400">
+                  하트를 모아 원하는 보상으로 교환해 보세요!
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {redemptions.map((r) => (
+                  <div
+                    key={r.id}
+                    data-testid={`redemption-item-${r.id}`}
+                    className="p-3 bg-white rounded-xl border border-slate-200/80 shadow-xs flex items-center justify-between gap-3 hover:border-slate-300 transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-pink-50 border border-pink-100 flex items-center justify-center text-sm shrink-0">
+                        🎁
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <h4
+                            data-testid={`redemption-title-${r.id}`}
+                            className="text-xs sm:text-sm font-bold text-slate-800 truncate"
+                          >
+                            {r.title}
+                          </h4>
+                          <span
+                            data-testid={`redemption-role-${r.id}`}
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                              r.redeemedByRole.includes('부모')
+                                ? 'bg-purple-100 text-purple-700'
+                                : 'bg-blue-100 text-blue-700'
+                            }`}
+                          >
+                            {r.redeemedByRole}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          {formatKoreanDateTime(r.createdAt)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2.5 shrink-0">
+                      <span
+                        data-testid={`redemption-hearts-${r.id}`}
+                        className="text-xs sm:text-sm font-black text-rose-600 flex items-center gap-0.5"
+                      >
+                        <Heart className="w-3.5 h-3.5 fill-rose-500 text-rose-500" />
+                        <span>-{r.hearts}개</span>
+                      </span>
+
+                      {isParentMode && (
+                        <button
+                          type="button"
+                          data-testid={`refund-btn-${r.id}`}
+                          onClick={() => handleRefundClick(r)}
+                          className="px-2 py-1 rounded-lg text-xs font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 transition-colors flex items-center gap-1"
+                          title="교환 취소 및 하트 환급"
+                          aria-label="취소/환급"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                          <span>취소/환급</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Refund Confirmation Modal */}
+      {pendingRefund && (
+        <div
+          data-testid="refund-confirm-dialog"
+          className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="refund-confirm-title"
+        >
+          <div className="bg-white rounded-2xl shadow-xl border border-slate-100 max-w-sm w-full p-5 space-y-4 animate-in zoom-in-95 duration-150 text-center">
+            <div className="w-12 h-12 mx-auto rounded-full bg-rose-100 text-rose-600 flex items-center justify-center text-xl">
+              ↩️
+            </div>
+            <div>
+              <h3
+                id="refund-confirm-title"
+                className="text-base font-extrabold text-slate-800"
+              >
+                보상 교환을 취소할까요?
+              </h3>
+              <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">
+                <strong>[{pendingRefund.title}]</strong> 교환을 취소하고
+                <br />
+                사용된 <strong>하트 {pendingRefund.hearts}개</strong>를 즉시
+                환급합니다.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                data-testid="cancel-refund-btn"
+                onClick={handleCancelRefund}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs transition-colors"
+              >
+                닫기
+              </button>
+              <button
+                type="button"
+                data-testid="confirm-refund-btn"
+                onClick={handleConfirmRefund}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs shadow-md shadow-rose-600/20 transition-colors"
+              >
+                취소 및 환급
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 6-Digit Master PIN Modal for Child Mode Authorization */}
       <ParentPinModal
