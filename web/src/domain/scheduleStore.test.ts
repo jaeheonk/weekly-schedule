@@ -1321,5 +1321,67 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(store.isCompleted(monCheckable)).toBe(true);
       expect(store.isParentVerified(monCheckable)).toBe(true);
     });
+
+    it('returns both skipped Master Schedule items and Master Schedule items moved to another weekday from getExcludedMasterItemsForThisWeek with accurate reasonText (Issue 04)', () => {
+      const monday = new Date(2026, 10, 9);
+      const store = new ScheduleStore({ currentDate: monday });
+      store.unlockParentMode();
+
+      const monMasterItems = store
+        .getMasterItems()
+        .filter((it) => it.weekday === 1);
+      const [itemSkipped, itemMoved, itemTimeModifiedOnly] = monMasterItems;
+
+      // 1. Skip itemSkipped on Monday
+      store.skipItemForThisWeek(itemSkipped);
+
+      // 2. Move itemMoved from Monday (1) to Thursday (4) at 17:30 ~ 18:30
+      store.updateItem(
+        {
+          ...itemMoved,
+          weekday: 4,
+          startHour: 17,
+          startMinute: 30,
+          endHour: 18,
+          endMinute: 30,
+        },
+        'thisWeek'
+      );
+
+      // 3. Modify time of itemTimeModifiedOnly on the same weekday (Monday = 1) -> NOT excluded from Monday
+      store.updateItem(
+        {
+          ...itemTimeModifiedOnly,
+          startHour: 20,
+          startMinute: 0,
+          endHour: 21,
+          endMinute: 0,
+        },
+        'thisWeek'
+      );
+
+      const excludedMon = store.getExcludedMasterItemsForThisWeek(1);
+      expect(excludedMon).toHaveLength(2);
+
+      const skippedEntry = excludedMon.find((e) => e.masterItem.id === itemSkipped.id);
+      expect(skippedEntry).toBeDefined();
+      expect(skippedEntry?.isSkipped).toBe(true);
+      expect(skippedEntry?.movedToItem).toBeNull();
+      expect(skippedEntry?.reasonText).toBe('이번 주 휴강·제외');
+
+      const movedEntry = excludedMon.find((e) => e.masterItem.id === itemMoved.id);
+      expect(movedEntry).toBeDefined();
+      expect(movedEntry?.isSkipped).toBe(false);
+      expect(movedEntry?.movedToItem?.weekday).toBe(4);
+      expect(movedEntry?.reasonText).toBe('이번 주 목요일 오후 5:30(으)로 이동');
+
+      // Reverting the moved item's override restores it to Monday and removes it from excluded list
+      store.revertThisWeekOverride(itemMoved.id);
+      const excludedAfterRevert = store.getExcludedMasterItemsForThisWeek(1);
+      expect(excludedAfterRevert).toHaveLength(1);
+      expect(excludedAfterRevert[0].masterItem.id).toBe(itemSkipped.id);
+      expect(store.getItemsForWeekday(1).some((it) => it.id === itemMoved.id)).toBe(true);
+      expect(store.getItemsForWeekday(4).some((it) => it.id === itemMoved.id)).toBe(false);
+    });
   });
 });

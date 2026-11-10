@@ -34,7 +34,7 @@ import {
   ScheduleEditScope,
 } from '../types/schedule';
 import { STICKER_EMOJIS } from '../types/snapshot';
-import { formatTimeRange, formatTime } from '../domain/calendarUtils';
+import { formatTimeRange } from '../domain/calendarUtils';
 import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
 import { playCompletionChime } from '../services/soundEffects';
 import { WeeklyStarStampBoardCard } from './WeeklyStarStampBoardCard';
@@ -94,6 +94,8 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
   const [focusedItemId, setFocusedItemId] = useState<string | null>(null);
   const [selectedCategoryFilter, setSelectedCategoryFilter] =
     useState<ScheduleCategoryType | null>(null);
+  const [showingResetAdjustmentsDialog, setShowingResetAdjustmentsDialog] =
+    useState<boolean>(false);
 
   useEffect(() => {
     const unsubscribe = store.subscribe(() => {
@@ -148,15 +150,14 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
   const selectedDayInfo = WEEKDAYS.find((w) => w.number === selectedWeekday);
   const selectedDayFullName = selectedDayInfo?.fullName || '요일';
   const selectedDayAdjustmentCount = store.getAdjustmentCountForWeekday(selectedWeekday);
+  const weekAdjustmentCount = store.getCurrentWeekAdjustmentCount();
   const isParentMode = store.isParentMode();
   const availableHearts = store.getAvailableHearts();
   const latestPraise = store.getLatestPraiseNote();
   const currentActiveItems = store.getCurrentActiveItems();
   const currentActiveItem = currentActiveItems[0] || null;
   const nextUpcomingItem = store.getNextUpcomingItem();
-  const skippedSelectedDayItems = store
-    .getMasterItems()
-    .filter((it) => it.weekday === selectedWeekday && store.isSkippedThisWeek(it.id));
+  const excludedDayInfos = store.getExcludedMasterItemsForThisWeek(selectedWeekday);
 
   const focusScheduleCard = (itemId: string) => {
     const el = document.getElementById(`schedule-card-${itemId}`);
@@ -816,6 +817,38 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
           )}
         </div>
 
+        {/* Weekly Override Summary & Reset Banner when current week has active adjustments */}
+        {weekAdjustmentCount > 0 && (
+          <div
+            data-testid="day-weekly-override-banner"
+            className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-2xl bg-orange-50/90 border border-orange-200/90 text-xs"
+          >
+            <div className="flex items-start gap-2.5 min-w-0">
+              <span className="text-orange-600 font-bold pt-0.5 shrink-0">🗓️</span>
+              <div className="space-y-0.5 min-w-0">
+                <p className="font-bold text-slate-900">
+                  {selectedDayAdjustmentCount > 0
+                    ? `${selectedDayFullName} 일정 ${selectedDayAdjustmentCount}개가 이번 주만 임시 조정되었어요`
+                    : `이번 주 총 ${weekAdjustmentCount}개의 스케줄이 임시 조정되어 있어요`}
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  다음 주 월요일에는 원래 기본 시간표로 자동 복구됩니다 · 전체 변경은 [주간 시간표] 탭에서 가능
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              data-testid="open-reset-adjustments-dialog-btn"
+              onClick={() => setShowingResetAdjustmentsDialog(true)}
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-orange-500 hover:bg-orange-600 text-white text-xs font-extrabold shadow-2xs transition-all active:scale-95 cursor-pointer shrink-0"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>원래대로</span>
+            </button>
+          </div>
+        )}
+
         {/* Batch Parent Verification Banner when child has completed items waiting for parent verification */}
         {selectedDayStats.waiting > 0 && (
           <div
@@ -961,13 +994,26 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                           </span>
                         )}
                         {badgeText && (
-                          <span
-                            data-testid={`item-adjustment-badge-${item.id}`}
-                            className="flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200"
-                          >
-                            <span>⚡</span>
-                            <span>{badgeText}</span>
-                          </span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span
+                              data-testid={`item-adjustment-badge-${item.id}`}
+                              className="flex items-center gap-1 text-[11px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200"
+                            >
+                              <span>⚡</span>
+                              <span>{badgeText}</span>
+                            </span>
+                            {!item.targetWeekKey && store.hasThisWeekOverride(item.id) && (
+                              <button
+                                type="button"
+                                data-testid={`item-revert-override-btn-${item.id}`}
+                                onClick={() => store.revertThisWeekOverride(item.id)}
+                                className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-full border border-blue-200 transition-colors cursor-pointer"
+                              >
+                                <RotateCcw className="w-2.5 h-2.5 text-blue-600" />
+                                <span>원래대로</span>
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
 
@@ -1187,45 +1233,121 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
         </div>
       )}
 
-      {/* Skipped / Cancelled Items for Selected Day (if any) */}
-      {skippedSelectedDayItems.length > 0 && (
+      {/* Excluded / Moved Master Schedule Items for Selected Day (if any) */}
+      {excludedDayInfos.length > 0 && (
         <div
           data-testid="today-skipped-items-section"
-          className="bg-slate-100/90 border border-dashed border-slate-300 rounded-3xl p-4 sm:p-5 space-y-2.5 animate-in fade-in"
+          className="bg-slate-100/90 border border-dashed border-orange-300/80 rounded-3xl p-4 sm:p-5 space-y-2.5 animate-in fade-in"
         >
           <div className="flex items-center justify-between text-xs font-bold text-slate-600">
             <div className="flex items-center gap-1.5">
               <Ban className="w-4 h-4 text-amber-600" />
-              <span>이번 주 휴강·제외된 일정 ({skippedSelectedDayItems.length}건)</span>
+              <span>이번 주 휴강·요일 이동된 원래 일정 ({excludedDayInfos.length}개)</span>
             </div>
-            <span className="text-[11px] text-slate-400">다음 주가 되면 원래대로 자동 복구됩니다</span>
+            <span className="text-[11px] text-amber-600 font-semibold">다음 주 자동 복구</span>
           </div>
 
           <div className="space-y-2">
-            {skippedSelectedDayItems.map((sk) => (
-              <div
-                key={sk.id}
-                className="flex items-center justify-between text-xs bg-white px-3.5 py-2.5 rounded-2xl border border-slate-200 shadow-2xs"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400 line-through font-semibold">{sk.title}</span>
-                  <span className="text-[11px] text-slate-400 font-mono">
-                    ({formatTime(sk.startHour, sk.startMinute)} ~ {formatTime(sk.endHour, sk.endMinute)})
-                  </span>
-                </div>
-                {isParentMode && (
+            {excludedDayInfos.map((info) => {
+              const masterItem = info.masterItem;
+              return (
+                <div
+                  key={masterItem.id}
+                  data-testid={`excluded-item-row-${masterItem.id}`}
+                  className="flex flex-wrap items-center justify-between gap-2 text-xs bg-white px-3.5 py-2.5 rounded-2xl border border-slate-200 shadow-2xs"
+                >
+                  <div className="space-y-0.5 min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        className={`font-bold ${
+                          info.isSkipped
+                            ? 'text-slate-400 line-through'
+                            : 'text-slate-600'
+                        }`}
+                      >
+                        {masterItem.title}
+                      </span>
+                      <span
+                        data-testid={`excluded-item-reason-${masterItem.id}`}
+                        className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-extrabold border border-amber-200/80"
+                      >
+                        {info.reasonText}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      원래 시간: {formatTimeRange(masterItem.startHour, masterItem.startMinute, masterItem.endHour, masterItem.endMinute)}
+                    </div>
+                  </div>
                   <button
                     type="button"
-                    data-testid={`restore-skipped-btn-${sk.id}`}
-                    onClick={() => store.revertThisWeekOverride(sk.id)}
-                    className="flex items-center gap-1 text-[11px] font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1 rounded-xl border border-indigo-200 transition-colors"
+                    data-testid={`restore-skipped-btn-${masterItem.id}`}
+                    onClick={() => store.revertThisWeekOverride(masterItem.id)}
+                    className="flex items-center gap-1 text-[11px] font-bold text-blue-700 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-full border border-blue-200 transition-colors cursor-pointer shrink-0"
                   >
-                    <RotateCcw className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>휴강 취소 및 복구</span>
+                    <RotateCcw className="w-3.5 h-3.5 text-blue-600" />
+                    <span>원래대로 복구</span>
                   </button>
-                )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Dialog for Resetting Weekly Overrides (Selected Day Only vs Entire Week) */}
+      {showingResetAdjustmentsDialog && (
+        <div
+          data-testid="reset-adjustments-confirm-dialog"
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4"
+        >
+          <div className="w-full max-w-md bg-white rounded-3xl p-5 sm:p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="space-y-1.5">
+              <h4 className="text-base sm:text-lg font-extrabold text-slate-900">
+                이번 주 조정한 스케줄을 원래 기본 시간표로 되돌릴까요?
+              </h4>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                일정을 원래 시간으로 되돌려도 이번 주에 완료 체크한 기록과 부모님 확인 도장·하트는 그대로 유지됩니다.
+              </p>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              {selectedDayAdjustmentCount > 0 && (
+                <button
+                  type="button"
+                  data-testid="confirm-reset-selected-day-adjustments-btn"
+                  onClick={() => {
+                    store.resetThisWeekAdjustments(selectedWeekday);
+                    setShowingResetAdjustmentsDialog(false);
+                  }}
+                  className="w-full py-2.5 px-4 rounded-2xl bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm font-extrabold shadow-xs transition-all cursor-pointer"
+                >
+                  {selectedDayFullName} 조정만 원래대로 되돌리기
+                </button>
+              )}
+
+              <button
+                type="button"
+                data-testid="confirm-reset-all-week-adjustments-btn"
+                onClick={() => {
+                  store.resetThisWeekAdjustments();
+                  setShowingResetAdjustmentsDialog(false);
+                }}
+                className="w-full py-2.5 px-4 rounded-2xl bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs sm:text-sm font-extrabold transition-all cursor-pointer"
+              >
+                이번 주 전체(월~일) 조정 모두 원래대로 되돌리기
+              </button>
+
+              <button
+                type="button"
+                data-testid="cancel-reset-adjustments-dialog-btn"
+                onClick={() => setShowingResetAdjustmentsDialog(false)}
+                className="w-full py-2.5 px-4 rounded-2xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs sm:text-sm font-bold transition-all cursor-pointer"
+              >
+                취소
+              </button>
+            </div>
           </div>
         </div>
       )}

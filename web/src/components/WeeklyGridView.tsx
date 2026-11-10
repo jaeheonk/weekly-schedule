@@ -115,7 +115,7 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
             const dayItems = items
               .filter((item) => item.weekday === weekday.number)
               .sort(compareScheduleItemsByTime);
-            const skippedDayItems = store.getExcludedMasterItemsForThisWeek(weekday.number);
+            const excludedDayItems = store.getExcludedMasterItemsForThisWeek(weekday.number);
 
             return (
               <div
@@ -256,12 +256,12 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
                     })
                   )}
 
-                  {/* Skipped Items for this Day Column */}
-                  {skippedDayItems.map((item) => {
+                  {/* Skipped / Moved Master Items for this Day Column */}
+                  {excludedDayItems.map((info) => {
+                    const item = info.masterItem;
                     const cat = CATEGORIES[item.category] || CATEGORIES.study;
                     const startTime = formatTime(item.startHour, item.startMinute);
                     const endTime = formatTime(item.endHour, item.endMinute);
-                    const badgeText = store.adjustmentBadgeText(item);
 
                     return (
                       <div
@@ -280,7 +280,7 @@ export const WeeklyGridView: React.FC<WeeklyGridViewProps> = ({
                             className="mb-1.5 px-1.5 py-0.5 rounded bg-slate-600 text-white text-[9px] font-extrabold tracking-tight flex items-center gap-1 shadow-2xs"
                           >
                             <span>⏭️</span>
-                            <span className="truncate">{badgeText || '이번 주 휴강·제외'}</span>
+                            <span className="truncate">{info.reasonText}</span>
                           </div>
                           <div className="flex items-center justify-between text-[10px] font-semibold mb-1">
                             <span className="text-slate-400 line-through">{cat.title}</span>

@@ -5,6 +5,7 @@ import {
   SubTask,
   DeviceRole,
   CompletionStats,
+  DayExcludedScheduleInfo,
   CATEGORIES,
   ScheduleEditScope,
   WEEKDAYS,
@@ -1363,14 +1364,32 @@ export class ScheduleStore {
   public getExcludedMasterItemsForThisWeek(
     weekday: WeekdayNumber,
     weekKey?: WeekKey
-  ): ScheduleItem[] {
+  ): DayExcludedScheduleInfo[] {
     const wk = weekKey || this.getCurrentWeekKey();
-    const result: ScheduleItem[] = [];
+    const result: DayExcludedScheduleInfo[] = [];
     for (const base of this.getMasterItems()) {
       if (base.weekday !== weekday) continue;
       const override = this.activeOverride(base.id, wk);
-      if (override && override.isSkipped) {
-        result.push(base);
+      if (!override) continue;
+      if (override.isSkipped) {
+        result.push({
+          id: base.id,
+          masterItem: base,
+          isSkipped: true,
+          movedToItem: null,
+          reasonText: '이번 주 휴강·제외',
+        });
+      } else if (override.overriddenItem && override.overriddenItem.weekday !== weekday) {
+        const moved = override.overriddenItem;
+        const movedDayInfo = WEEKDAYS.find((w) => w.number === moved.weekday);
+        const movedStartTime = formatTime(moved.startHour, moved.startMinute);
+        result.push({
+          id: base.id,
+          masterItem: base,
+          isSkipped: false,
+          movedToItem: moved,
+          reasonText: `이번 주 ${movedDayInfo?.fullName || ''} ${movedStartTime}(으)로 이동`,
+        });
       }
     }
     return result;
@@ -1482,19 +1501,7 @@ export class ScheduleStore {
     const adjustedOnDay = this.getItemsForWeekday(weekday, wk).filter((item) =>
       this.isAdjustedThisWeek(item, wk)
     ).length;
-
-    let excludedFromDay = 0;
-    for (const base of this.getMasterItems()) {
-      if (base.weekday !== weekday) continue;
-      const override = this.activeOverride(base.id, wk);
-      if (!override) continue;
-      if (override.isSkipped) {
-        excludedFromDay++;
-      } else if (override.overriddenItem && override.overriddenItem.weekday !== weekday) {
-        excludedFromDay++;
-      }
-    }
-
+    const excludedFromDay = this.getExcludedMasterItemsForThisWeek(weekday, wk).length;
     return adjustedOnDay + excludedFromDay;
   }
 

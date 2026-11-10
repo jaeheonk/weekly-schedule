@@ -853,4 +853,233 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       expect(screen.queryByTestId('selected-day-reset-completions-btn')).not.toBeInTheDocument();
     });
   });
+
+  describe('Weekly Override Summary, Inline Revert & Excluded/Moved Master Items Restore (Issue 04)', () => {
+    it('renders Weekly Override summary banner in selected day header when current week has adjustments, and allows resetting only the selected day or the entire week via confirmation dialog', () => {
+      // Monday Nov 9, 2026 (2026-W46)
+      store.unlockParentMode();
+
+      render(<TodayScheduleView store={store} onPlayChime={mockPlayChime} />);
+
+      // Initially 0 adjustments in the week -> summary banner is hidden
+      expect(screen.queryByTestId('day-weekly-override-banner')).not.toBeInTheDocument();
+
+      // Create 1 time adjustment on Monday (1) and 1 skip on Wednesday (3)
+      const monItems = store.getItemsForWeekday(1);
+      const wedItems = store.getItemsForWeekday(3);
+      const monAdjustedItem = monItems[0];
+      const wedSkippedItem = wedItems[0];
+
+      act(() => {
+        store.updateItem({ ...monAdjustedItem, startHour: 20, endHour: 21 }, 'thisWeek');
+        store.skipItemForThisWeek(wedSkippedItem);
+      });
+
+      expect(store.getCurrentWeekAdjustmentCount()).toBe(2);
+      expect(store.getAdjustmentCountForWeekday(1)).toBe(1);
+      expect(store.getAdjustmentCountForWeekday(2)).toBe(0);
+      expect(store.getAdjustmentCountForWeekday(3)).toBe(1);
+
+      // On Monday (1 adjustment on selected day): banner shows "월요일 일정 1개가 이번 주만 임시 조정되었어요"
+      const banner = screen.getByTestId('day-weekly-override-banner');
+      expect(banner).toBeInTheDocument();
+      expect(banner).toHaveTextContent('월요일 일정 1개가 이번 주만 임시 조정되었어요');
+
+      // Switch to Tuesday (0 adjustments on Tuesday, 2 in the week): banner still appears showing total week count!
+      fireEvent.click(screen.getByTestId('weekday-btn-2'));
+      expect(store.getSelectedWeekday()).toBe(2);
+      expect(screen.getByTestId('day-weekly-override-banner')).toHaveTextContent(
+        '이번 주 총 2개의 스케줄이 임시 조정되어 있어요'
+      );
+
+      // Switch back to Monday (1) and click "원래대로" button on the banner
+      fireEvent.click(screen.getByTestId('weekday-btn-1'));
+      const openResetDialogBtn = screen.getByTestId('open-reset-adjustments-dialog-btn');
+      expect(openResetDialogBtn).toHaveTextContent('원래대로');
+      fireEvent.click(openResetDialogBtn);
+
+      // Confirmation dialog opens with both options ("월요일 조정만 원래대로 되돌리기" and "이번 주 전체(월~일) 조정 모두 원래대로 되돌리기")
+      const dialog = screen.getByTestId('reset-adjustments-confirm-dialog');
+      expect(dialog).toBeInTheDocument();
+      const resetSelectedDayBtn = screen.getByTestId('confirm-reset-selected-day-adjustments-btn');
+      const resetAllWeekBtn = screen.getByTestId('confirm-reset-all-week-adjustments-btn');
+      expect(resetSelectedDayBtn).toHaveTextContent('월요일 조정만 원래대로 되돌리기');
+      expect(resetAllWeekBtn).toHaveTextContent('이번 주 전체(월~일) 조정 모두 원래대로 되돌리기');
+
+      // Choose "월요일 조정만 원래대로 되돌리기"
+      fireEvent.click(resetSelectedDayBtn);
+      expect(screen.queryByTestId('reset-adjustments-confirm-dialog')).not.toBeInTheDocument();
+
+      // Monday's adjustment is reverted, while Wednesday's skip remains active!
+      expect(store.getAdjustmentCountForWeekday(1)).toBe(0);
+      expect(store.isAdjustedThisWeek(store.getItemsForWeekday(1)[0])).toBe(false);
+      expect(store.getAdjustmentCountForWeekday(3)).toBe(1);
+      expect(store.isSkippedThisWeek(wedSkippedItem.id)).toBe(true);
+      expect(store.getCurrentWeekAdjustmentCount()).toBe(1);
+
+      // Now on Monday (0 adjustments on Monday, 1 on Wednesday): open dialog again and choose "이번 주 전체(월~일) 조정 모두 원래대로 되돌리기"
+      expect(screen.getByTestId('day-weekly-override-banner')).toHaveTextContent(
+        '이번 주 총 1개의 스케줄이 임시 조정되어 있어요'
+      );
+      fireEvent.click(screen.getByTestId('open-reset-adjustments-dialog-btn'));
+      expect(
+        screen.queryByTestId('confirm-reset-selected-day-adjustments-btn')
+      ).not.toBeInTheDocument();
+      fireEvent.click(screen.getByTestId('confirm-reset-all-week-adjustments-btn'));
+
+      // All weekly adjustments across Mon-Sun are now cleared and banner disappears
+      expect(store.getCurrentWeekAdjustmentCount()).toBe(0);
+      expect(store.isSkippedThisWeek(wedSkippedItem.id)).toBe(false);
+      expect(screen.queryByTestId('day-weekly-override-banner')).not.toBeInTheDocument();
+    });
+
+    it('renders adjustment reason badge and inline "원래대로" button on overridden Master Schedule cards (and hides inline revert on temporary this-week additions), reverting only that item on click', () => {
+      store.unlockParentMode();
+
+      const monItems = store.getItemsForWeekday(1);
+      const timeAdjustedMaster = monItems[0];
+      const movedFromWedMaster = store.getItemsForWeekday(3)[0];
+
+      // 1. Modify time of Monday master item
+      store.updateItem({ ...timeAdjustedMaster, startHour: 20, endHour: 21 }, 'thisWeek');
+
+      // 2. Move Wednesday master item onto Monday (with time change)
+      store.updateItem(
+        { ...movedFromWedMaster, weekday: 1, startHour: 21, endHour: 22 },
+        'thisWeek'
+      );
+
+      // 3. Add a temporary this-week-only item on Monday
+      store.addItem(
+        {
+          id: 'temp-mon-special',
+          weekday: 1,
+          startHour: 18,
+          startMinute: 0,
+          endHour: 19,
+          endMinute: 0,
+          title: '이번 주 특별 보강',
+          note: '',
+          category: 'study',
+          iconName: 'book',
+          subTasks: [],
+          isNotificationEnabled: false,
+          notificationLeadMinutes: [],
+          targetWeekKey: null,
+          updatedAt: Date.now() / 1000,
+        },
+        [1],
+        'thisWeek'
+      );
+
+      render(<TodayScheduleView store={store} onPlayChime={mockPlayChime} />);
+
+      // Time-adjusted master item has badge + inline "원래대로" button
+      expect(
+        screen.getByTestId(`item-adjustment-badge-${timeAdjustedMaster.id}`)
+      ).toHaveTextContent(/이번 주 시간 조정/);
+      const revertTimeBtn = screen.getByTestId(`item-revert-override-btn-${timeAdjustedMaster.id}`);
+      expect(revertTimeBtn).toBeInTheDocument();
+      expect(revertTimeBtn).toHaveTextContent('원래대로');
+
+      // Day+time-adjusted master item moved from Wednesday has badge + inline "원래대로" button
+      expect(
+        screen.getByTestId(`item-adjustment-badge-${movedFromWedMaster.id}`)
+      ).toHaveTextContent(/이번 주 요일·시간 조정/);
+      const revertMovedBtn = screen.getByTestId(
+        `item-revert-override-btn-${movedFromWedMaster.id}`
+      );
+      expect(revertMovedBtn).toBeInTheDocument();
+
+      // Temporary this-week addition has "이번 주 추가 일정" badge but NO inline override revert button
+      expect(screen.getByTestId('item-adjustment-badge-temp-mon-special')).toHaveTextContent(
+        '이번 주 추가 일정'
+      );
+      expect(
+        screen.queryByTestId('item-revert-override-btn-temp-mon-special')
+      ).not.toBeInTheDocument();
+
+      // Click inline "원래대로" on the moved item -> returns to Wednesday immediately while keeping timeAdjustedMaster adjusted
+      fireEvent.click(revertMovedBtn);
+      expect(
+        screen.queryByTestId(`schedule-card-${movedFromWedMaster.id}`)
+      ).not.toBeInTheDocument();
+      expect(store.getItemsForWeekday(3).some((it) => it.id === movedFromWedMaster.id)).toBe(true);
+      expect(store.hasThisWeekOverride(timeAdjustedMaster.id)).toBe(true);
+
+      // Click inline "원래대로" on timeAdjustedMaster -> reverts its time back to original Master Schedule time
+      fireEvent.click(revertTimeBtn);
+      expect(store.hasThisWeekOverride(timeAdjustedMaster.id)).toBe(false);
+      expect(
+        screen.queryByTestId(`item-adjustment-badge-${timeAdjustedMaster.id}`)
+      ).not.toBeInTheDocument();
+    });
+
+    it('renders excluded/moved Master Schedule items section with both skipped items ("이번 주 휴강·제외") and items moved to another weekday ("이번 주 {요일} {시간}(으)로 이동"), restores each via "원래대로 복구", and still displays the section below empty state when 0 active items remain', () => {
+      store.unlockParentMode();
+
+      // Use Sunday (7) or Monday (1): let's select Monday (1) and skip/move its items
+      const monItems = store.getItemsForWeekday(1);
+      const itemToSkip = monItems[0];
+      const itemToMove = monItems[1];
+
+      // Skip itemToSkip
+      store.skipItemForThisWeek(itemToSkip);
+
+      // Move itemToMove from Monday (1) to Friday (5) at 16:30 ~ 17:30
+      store.updateItem(
+        {
+          ...itemToMove,
+          weekday: 5,
+          startHour: 16,
+          startMinute: 30,
+          endHour: 17,
+          endMinute: 30,
+        },
+        'thisWeek'
+      );
+
+      render(<TodayScheduleView store={store} onPlayChime={mockPlayChime} />);
+
+      const excludedSection = screen.getByTestId('today-skipped-items-section');
+      expect(excludedSection).toBeInTheDocument();
+      expect(excludedSection).toHaveTextContent('이번 주 휴강·요일 이동된 원래 일정 (2개)');
+
+      // 1. Skipped item displays "이번 주 휴강·제외" badge and original time range
+      const skippedRow = screen.getByTestId(`excluded-item-row-${itemToSkip.id}`);
+      expect(skippedRow).toHaveTextContent(itemToSkip.title);
+      expect(screen.getByTestId(`excluded-item-reason-${itemToSkip.id}`)).toHaveTextContent(
+        '이번 주 휴강·제외'
+      );
+      expect(skippedRow).toHaveTextContent('원래 시간:');
+
+      // 2. Moved item displays "이번 주 금요일 오후 4:30(으)로 이동" badge and original time range
+      const movedRow = screen.getByTestId(`excluded-item-row-${itemToMove.id}`);
+      expect(movedRow).toHaveTextContent(itemToMove.title);
+      expect(screen.getByTestId(`excluded-item-reason-${itemToMove.id}`)).toHaveTextContent(
+        '이번 주 금요일 오후 4:30(으)로 이동'
+      );
+      expect(movedRow).toHaveTextContent('원래 시간:');
+
+      // 3. Skip all remaining Monday items so Monday has 0 active items -> both empty state card AND excluded items section are displayed!
+      act(() => {
+        for (const rem of store.getItemsForWeekday(1)) {
+          store.skipItemForThisWeek(rem);
+        }
+      });
+
+      expect(store.getItemsForWeekday(1)).toHaveLength(0);
+      expect(screen.getByTestId('today-empty-state')).toBeInTheDocument();
+      expect(screen.getByTestId('today-skipped-items-section')).toBeInTheDocument();
+
+      // 4. Click "원래대로 복구" on the moved item -> restores it back to Monday's active timeline
+      const restoreMovedBtn = screen.getByTestId(`restore-skipped-btn-${itemToMove.id}`);
+      expect(restoreMovedBtn).toHaveTextContent('원래대로 복구');
+      fireEvent.click(restoreMovedBtn);
+
+      expect(screen.queryByTestId('today-empty-state')).not.toBeInTheDocument();
+      expect(screen.getByTestId(`schedule-card-${itemToMove.id}`)).toBeInTheDocument();
+      expect(screen.queryByTestId(`excluded-item-row-${itemToMove.id}`)).not.toBeInTheDocument();
+    });
+  });
 });

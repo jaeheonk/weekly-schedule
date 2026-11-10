@@ -118,3 +118,11 @@ export interface CompletionStats {
   total: number;
   percentage: number;
 }
+
+export interface DayExcludedScheduleInfo {
+  id: string;
+  masterItem: ScheduleItem;
+  isSkipped: boolean;
+  movedToItem: ScheduleItem | null;
+  reasonText: string;
+}
