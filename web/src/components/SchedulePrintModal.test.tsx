@@ -220,4 +220,73 @@ describe('SchedulePrintModal Component (Seam 2)', () => {
 
     assertMergedPresentation();
   });
+
+  it('virtually merges contiguous schedule items (same title, category, 0-min gap) into a single print block (Issue 02)', () => {
+    mockStore.verifyParentPin('160125');
+
+    // Register two contiguous Monday morning items in an empty time window:
+    // 9:30~10:30 and 10:30~12:00 "수학 심화" (spans 9:30 and 10:30 base slots)
+    mockStore.addItem(
+      {
+        id: 'math-cont-1',
+        title: '수학 심화',
+        weekday: 1,
+        startHour: 9,
+        startMinute: 30,
+        endHour: 10,
+        endMinute: 30,
+        category: 'study',
+        iconName: 'book',
+        subTasks: [{ id: 'st-1', title: '개념정리' }],
+        note: '1교시',
+        isNotificationEnabled: false,
+        notificationLeadMinutes: [],
+        updatedAt: 1000,
+      },
+      [1],
+      'master'
+    );
+
+    mockStore.addItem(
+      {
+        id: 'math-cont-2',
+        title: '  수학 심화  ',
+        weekday: 1,
+        startHour: 10,
+        startMinute: 30,
+        endHour: 12,
+        endMinute: 0,
+        category: 'study',
+        iconName: 'book',
+        subTasks: [{ id: 'st-2', title: '문제풀이' }],
+        note: '2교시',
+        isNotificationEnabled: false,
+        notificationLeadMinutes: [],
+        updatedAt: 1005,
+      },
+      [1],
+      'master'
+    );
+
+    render(
+      <SchedulePrintModal
+        isOpen={true}
+        onClose={vi.fn()}
+        store={mockStore}
+      />
+    );
+
+    const mergeToggle = screen.getByLabelText(/장기 일정 셀 하나로 병합하기/i);
+    expect(mergeToggle).toBeChecked();
+
+    // When mergeLongBlocks is enabled (default), the two contiguous items should merge into a single "수학 심화" block
+    expect(screen.getAllByText('수학 심화')).toHaveLength(1);
+    expect(screen.getByText('개념정리')).toBeInTheDocument();
+    expect(screen.getByText('문제풀이')).toBeInTheDocument();
+
+    // When toggling OFF mergeLongBlocks, the preprocessed virtual 9:30~12:00 item is rendered across individual slots
+    fireEvent.click(mergeToggle);
+    expect(mergeToggle).not.toBeChecked();
+    expect(screen.getAllByText('수학 심화')).toHaveLength(2);
+  });
 });

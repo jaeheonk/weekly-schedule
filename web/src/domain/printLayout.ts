@@ -182,6 +182,87 @@ export function shouldMergeAcrossSlots(
   return mergeLongBlocks && spannedSlotCount >= 2;
 }
 
+/**
+ * Checks whether two schedule items on the same weekday can be contiguous-merged:
+ * 0-minute gap, matching title (trimmed), and matching category.
+ */
+export function canMergeContiguous(prev: ScheduleItem, next: ScheduleItem): boolean {
+  const isContiguous = getItemEndMinutes(prev) === getItemStartMinutes(next);
+  const isSameTitle = prev.title.trim() === next.title.trim();
+  const isSameCategory = prev.category === next.category;
+  return isContiguous && isSameTitle && isSameCategory;
+}
+
+function normalizeMergedItem(item: ScheduleItem): ScheduleItem {
+  return {
+    ...item,
+    title: item.title.trim(),
+    subTasks: item.subTasks ? [...item.subTasks] : [],
+  };
+}
+
+/**
+ * Merges contiguous schedule items on the same weekday that have 0-minute gap,
+ * matching title (after trim), and identical category into a single virtual ScheduleItem.
+ * Preserves subtasks (concatenated in sequence) and notes (joined by newline if non-empty).
+ */
+export function mergeContiguousScheduleItems(items: ScheduleItem[]): ScheduleItem[] {
+  if (items.length <= 1) return [...items];
+
+  // Group by weekday
+  const byWeekday = new Map<WeekdayNumber, ScheduleItem[]>();
+  for (const item of items) {
+    const list = byWeekday.get(item.weekday) || [];
+    list.push(item);
+    byWeekday.set(item.weekday, list);
+  }
+
+  const result: ScheduleItem[] = [];
+  const weekdays = Array.from(byWeekday.keys()).sort((a, b) => a - b);
+
+  for (const weekday of weekdays) {
+    const dayItems = byWeekday.get(weekday)!;
+    // Sort items chronologically by start time, then end time
+    const sorted = [...dayItems].sort((a, b) => {
+      const startDiff = getItemStartMinutes(a) - getItemStartMinutes(b);
+      if (startDiff !== 0) return startDiff;
+      return getItemEndMinutes(a) - getItemEndMinutes(b);
+    });
+
+    let current = normalizeMergedItem(sorted[0]);
+
+    for (let i = 1; i < sorted.length; i++) {
+      const next = sorted[i];
+
+      if (canMergeContiguous(current, next)) {
+        // Merge next into current
+        const notes = [current.note, next.note]
+          .map((n) => (n || '').trim())
+          .filter((n) => n.length > 0);
+
+        current = {
+          ...current,
+          endHour: next.endHour,
+          endMinute: next.endMinute,
+          note: notes.join('\n'),
+          subTasks: [
+            ...(current.subTasks || []),
+            ...(next.subTasks ? [...next.subTasks] : []),
+          ],
+          updatedAt: Math.max(current.updatedAt || 0, next.updatedAt || 0),
+        };
+      } else {
+        result.push(current);
+        current = normalizeMergedItem(next);
+      }
+    }
+
+    result.push(current);
+  }
+
+  return result;
+}
+
 export function buildPrintColumnBlocks(
   weekday: WeekdayNumber,
   items: ScheduleItem[],

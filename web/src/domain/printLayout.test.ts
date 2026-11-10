@@ -5,6 +5,8 @@ import {
   getThemeStyles,
   formatPrintDisplayLines,
   shouldMergeAcrossSlots,
+  mergeContiguousScheduleItems,
+  canMergeContiguous,
 } from './printLayout';
 import { ScheduleItem } from '../types/schedule';
 
@@ -227,6 +229,168 @@ describe('printLayout domain helper (Seam 1)', () => {
         block.nextSlotMinutes
       );
       expect(continuationFormat.subtitleText).toBeNull();
+    });
+  });
+
+  describe('Merged Contiguous Schedule Helper (Issue 02)', () => {
+    const itemA: ScheduleItem = {
+      id: 'math-1',
+      title: '수학 숙제',
+      weekday: 1, // 월요일
+      startHour: 14,
+      startMinute: 0,
+      endHour: 15,
+      endMinute: 0,
+      category: 'study',
+      iconName: 'book',
+      subTasks: [{ id: 'sub-1', title: '문제집 10p' }],
+      note: '교재 1권',
+      isNotificationEnabled: false,
+      notificationLeadMinutes: [],
+      updatedAt: 1000,
+    };
+
+    const itemB: ScheduleItem = {
+      id: 'math-2',
+      title: '  수학 숙제  ', // with whitespace to test trim
+      weekday: 1, // 월요일
+      startHour: 15,
+      startMinute: 0,
+      endHour: 16,
+      endMinute: 0,
+      category: 'study',
+      iconName: 'book',
+      subTasks: [{ id: 'sub-2', title: '오답노트 작성' }],
+      note: '교재 2권',
+      isNotificationEnabled: false,
+      notificationLeadMinutes: [],
+      updatedAt: 1005,
+    };
+
+    it('canMergeContiguous predicate validates 0-min gap, matching title, and matching category', () => {
+      expect(canMergeContiguous(itemA, itemB)).toBe(true);
+
+      const nonContiguous = { ...itemB, startMinute: 5 };
+      expect(canMergeContiguous(itemA, nonContiguous)).toBe(false);
+
+      const diffTitle = { ...itemB, title: '다른 과목' };
+      expect(canMergeContiguous(itemA, diffTitle)).toBe(false);
+
+      const diffCat = { ...itemB, category: 'free' as const };
+      expect(canMergeContiguous(itemA, diffCat)).toBe(false);
+    });
+
+    it('merges two contiguous schedule items into a single virtual item spanning start to end', () => {
+      const merged = mergeContiguousScheduleItems([itemA, itemB]);
+
+      expect(merged).toHaveLength(1);
+      const item = merged[0];
+      expect(item.id).toBe('math-1');
+      expect(item.title).toBe('수학 숙제');
+      expect(item.category).toBe('study');
+      expect(item.weekday).toBe(1);
+      expect(item.startHour).toBe(14);
+      expect(item.startMinute).toBe(0);
+      expect(item.endHour).toBe(16);
+      expect(item.endMinute).toBe(0);
+      expect(item.note).toBe('교재 1권\n교재 2권');
+      expect(item.subTasks).toEqual([
+        { id: 'sub-1', title: '문제집 10p' },
+        { id: 'sub-2', title: '오답노트 작성' },
+      ]);
+    });
+
+    it('cumulatively merges 3 or more contiguous items into a single multi-hour block', () => {
+      const item1: ScheduleItem = {
+        ...itemA,
+        id: 'c-1',
+        startHour: 13,
+        startMinute: 0,
+        endHour: 14,
+        endMinute: 0,
+        note: '1단계',
+      };
+      const item2: ScheduleItem = {
+        ...itemA,
+        id: 'c-2',
+        startHour: 14,
+        startMinute: 0,
+        endHour: 15,
+        endMinute: 0,
+        note: '',
+      };
+      const item3: ScheduleItem = {
+        ...itemA,
+        id: 'c-3',
+        startHour: 15,
+        startMinute: 0,
+        endHour: 16,
+        endMinute: 0,
+        note: '3단계',
+      };
+
+      const merged = mergeContiguousScheduleItems([item1, item2, item3]);
+      expect(merged).toHaveLength(1);
+      expect(merged[0].startHour).toBe(13);
+      expect(merged[0].startMinute).toBe(0);
+      expect(merged[0].endHour).toBe(16);
+      expect(merged[0].endMinute).toBe(0);
+      expect(merged[0].note).toBe('1단계\n3단계');
+    });
+
+    it('does not merge items if there is a time gap (even 5 minutes)', () => {
+      const gappedItemB: ScheduleItem = {
+        ...itemB,
+        startHour: 15,
+        startMinute: 5,
+        endHour: 16,
+        endMinute: 5,
+      };
+
+      const merged = mergeContiguousScheduleItems([itemA, gappedItemB]);
+      expect(merged).toHaveLength(2);
+      expect(merged[0].id).toBe('math-1');
+      expect(merged[1].id).toBe('math-2');
+    });
+
+    it('does not merge items if titles differ (ignoring leading/trailing whitespace)', () => {
+      const diffTitleItem: ScheduleItem = {
+        ...itemB,
+        title: '영어 숙제',
+      };
+
+      const merged = mergeContiguousScheduleItems([itemA, diffTitleItem]);
+      expect(merged).toHaveLength(2);
+      expect(merged[0].title).toBe('수학 숙제');
+      expect(merged[1].title).toBe('영어 숙제');
+    });
+
+    it('does not merge items if categories differ even if titles and times align', () => {
+      const diffCatItem: ScheduleItem = {
+        ...itemB,
+        category: 'free',
+      };
+
+      const merged = mergeContiguousScheduleItems([itemA, diffCatItem]);
+      expect(merged).toHaveLength(2);
+      expect(merged[0].category).toBe('study');
+      expect(merged[1].category).toBe('free');
+    });
+
+    it('does not merge items on different weekdays', () => {
+      const tuesdayItem: ScheduleItem = {
+        ...itemB,
+        weekday: 2, // 화요일
+        startHour: 15,
+        startMinute: 0,
+        endHour: 16,
+        endMinute: 0,
+      };
+
+      const merged = mergeContiguousScheduleItems([itemA, tuesdayItem]);
+      expect(merged).toHaveLength(2);
+      expect(merged.find((i) => i.weekday === 1)).toBeDefined();
+      expect(merged.find((i) => i.weekday === 2)).toBeDefined();
     });
   });
 });

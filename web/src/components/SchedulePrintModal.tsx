@@ -17,6 +17,7 @@ import {
   buildPrintColumnBlocks,
   getThemeStyles,
   formatPrintDisplayLines,
+  mergeContiguousScheduleItems,
 } from '../domain/printLayout';
 
 export interface SchedulePrintModalProps {
@@ -67,8 +68,10 @@ export const SchedulePrintModal: React.FC<SchedulePrintModalProps> = ({
 
   if (!isOpen) return null;
 
-  const printableItems: ScheduleItem[] =
+  const rawPrintableItems: ScheduleItem[] =
     config.scope === 'master' ? store.getMasterItems() : store.getEffectiveItems();
+
+  const printableItems: ScheduleItem[] = mergeContiguousScheduleItems(rawPrintableItems);
 
   const timeSlots = getPrintableTimeSlots(printableItems);
   const themeStyles = getThemeStyles(config.theme);
