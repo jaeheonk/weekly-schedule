@@ -246,4 +246,30 @@ describe('WeeklyGridView & Weekly Overrides Display (Seam 3)', () => {
     fireEvent.click(screen.getByTestId(`weekly-edit-item-btn-${mondayItem.id}`));
     expect(mockOpenEdit).toHaveBeenCalledWith(mondayItem, mondayItem.weekday, 'master');
   });
+
+  it('triggers onOpenEditModal with thisWeek scope when parent clicks dashed card or its edit button', () => {
+    store.unlockParentMode();
+    const mockOpenEdit = vi.fn();
+    const mondayItem = store.getItemsForWeekday(1)[0];
+    store.skipItemForThisWeek(mondayItem);
+
+    render(
+      <WeeklyGridView
+        currentWeekday={1}
+        store={store}
+        onOpenEditModal={mockOpenEdit}
+      />
+    );
+
+    // Edit button on dashed card
+    const skippedCard = screen.getByTestId(`weekly-skipped-card-${mondayItem.id}`);
+    const editBtn = within(skippedCard).getByTestId(`weekly-edit-item-btn-${mondayItem.id}`);
+    fireEvent.click(editBtn);
+    expect(mockOpenEdit).toHaveBeenCalledWith(mondayItem, mondayItem.weekday, 'thisWeek');
+
+    // Clicking dashed card body directly
+    mockOpenEdit.mockClear();
+    fireEvent.click(skippedCard);
+    expect(mockOpenEdit).toHaveBeenCalledWith(mondayItem, mondayItem.weekday, 'thisWeek');
+  });
 });

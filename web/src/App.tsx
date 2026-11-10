@@ -32,7 +32,6 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
   const [activeTab, setActiveTab] = useState<'today' | 'weekly' | 'stars'>(getTabFromHash);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState<boolean>(isPrintHash);
   const [printScope, setPrintScope] = useState<ScheduleEditScope>('master');
-  const [items, setItems] = useState<ScheduleItem[]>(() => globalScheduleStore.getItems());
   const [isParentMode, setIsParentMode] = useState<boolean>(() =>
     globalScheduleStore.isParentMode()
   );
@@ -130,7 +129,6 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
 
   useEffect(() => {
     const unsubscribe = globalScheduleStore.subscribe(() => {
-      setItems(globalScheduleStore.getItems());
       setIsParentMode(globalScheduleStore.isParentMode());
       setAvailableHearts(globalScheduleStore.getAvailableHearts());
       setAvailableStars(globalScheduleStore.getAvailableStars());

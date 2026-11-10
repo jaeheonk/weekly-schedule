@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import App from './App';
 import { VercelBlobSyncService } from './services/vercelBlobSync';
 import { globalScheduleStore } from './domain/scheduleStore';
@@ -887,6 +887,28 @@ describe('App & Hash Navigation (Seam 2)', () => {
         // Switch to thisWeek scope -> temporary addition appears
         fireEvent.click(screen.getByTestId('weekly-scope-thisweek-btn'));
         expect(screen.getByText('금요일 특별 세미나')).toBeInTheDocument();
+
+        // 8. Dashed card edit button opens ScheduleEditModal with thisWeek scope and allows restore
+        const tuesdayItem = globalScheduleStore.getItemsForWeekday(2)[0];
+        globalScheduleStore.skipItemForThisWeek(tuesdayItem);
+
+        const skippedCard = await screen.findByTestId(`weekly-skipped-card-${tuesdayItem.id}`);
+        expect(skippedCard).toBeInTheDocument();
+
+        const editSkippedBtn = within(skippedCard).getByTestId(`weekly-edit-item-btn-${tuesdayItem.id}`);
+        fireEvent.click(editSkippedBtn);
+
+        expect(await screen.findByTestId('schedule-edit-modal')).toBeInTheDocument();
+        expect(screen.getByTestId('scope-this-week-radio')).toHaveClass('bg-white');
+        const revertBtn = screen.getByTestId('revert-override-btn');
+        expect(revertBtn).toBeInTheDocument();
+
+        // Clicking restore button restores original schedule and closes modal
+        fireEvent.click(revertBtn);
+        await waitFor(() => {
+          expect(screen.queryByTestId('schedule-edit-modal')).not.toBeInTheDocument();
+        });
+        expect(screen.queryByTestId(`weekly-skipped-card-${tuesdayItem.id}`)).not.toBeInTheDocument();
       });
     });
   });
