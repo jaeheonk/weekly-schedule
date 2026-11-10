@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { StarRewardShopView } from './StarRewardShopView';
 import { ScheduleStore } from '../domain/scheduleStore';
@@ -77,5 +77,43 @@ describe('StarRewardShopView (Seam 2 / Issue 06)', () => {
 
     expect(screen.getByText(/하트 5개 보너스 상자 교환/)).toBeInTheDocument();
     expect(screen.getByText('-1⭐')).toBeInTheDocument();
+  });
+
+  it('renders heart bonus/explanation banner with "하트 보상 교환하기" link and triggers onOpenRewardExchange', () => {
+    const mockOpenRewardExchange = vi.fn();
+    store.sendFamilyPraise({
+      hearts: 20,
+      sticker: 'heart',
+      message: '칭찬 하트',
+    });
+    expect(store.getAvailableHearts()).toBe(20);
+
+    render(
+      <StarRewardShopView
+        store={store}
+        onOpenRewardExchange={mockOpenRewardExchange}
+      />
+    );
+
+    // Banner is rendered
+    const banner = screen.getByTestId('star-shop-heart-banner');
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent(/스타로 충전한 하트/);
+    expect(banner).toHaveTextContent('보유 하트 20개');
+
+    // Shortcut button exists inside banner
+    const exchangeBtn = screen.getByTestId('star-shop-heart-exchange-link');
+    expect(banner).toContainElement(exchangeBtn);
+    expect(exchangeBtn).toHaveTextContent('하트 보상 교환하기');
+
+    // Clicking banner button calls callback
+    fireEvent.click(exchangeBtn);
+    expect(mockOpenRewardExchange).toHaveBeenCalledTimes(1);
+
+    // Clicking hero card heart balance badge also calls callback
+    const heroHeartBadge = screen.getByTestId('star-shop-heart-balance-badge');
+    expect(heroHeartBadge).toHaveTextContent('보유 하트 20개');
+    fireEvent.click(heroHeartBadge);
+    expect(mockOpenRewardExchange).toHaveBeenCalledTimes(2);
   });
 });

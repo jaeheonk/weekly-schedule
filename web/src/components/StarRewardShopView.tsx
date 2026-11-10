@@ -22,11 +22,13 @@ import { formatKoreanDateTime } from '../domain/calendarUtils';
 export interface StarRewardShopViewProps {
   store?: ScheduleStore;
   onOpenParentPin?: () => void;
+  onOpenRewardExchange?: () => void;
 }
 
 export const StarRewardShopView: React.FC<StarRewardShopViewProps> = ({
   store = globalScheduleStore,
   onOpenParentPin,
+  onOpenRewardExchange,
 }) => {
   const [, setRenderVersion] = useState(0);
   const [selectedTab, setSelectedTab] = useState<'rewards' | 'ledger'>('rewards');
@@ -150,10 +152,16 @@ export const StarRewardShopView: React.FC<StarRewardShopViewProps> = ({
           </div>
 
           <div className="flex flex-col sm:items-end gap-2">
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/20 backdrop-blur-md text-white text-xs font-extrabold border border-white/20 shadow-xs">
+            <button
+              type="button"
+              data-testid="star-shop-heart-balance-badge"
+              onClick={onOpenRewardExchange}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/20 hover:bg-white/30 backdrop-blur-md text-white text-xs font-extrabold border border-white/20 shadow-xs transition-colors cursor-pointer"
+              title="하트 보상 교환 열기"
+            >
               <Heart className="w-3.5 h-3.5 fill-pink-300 text-pink-300" />
               <span>보유 하트 {availableHearts}개</span>
-            </div>
+            </button>
             <span className="text-xs font-semibold text-white/85">
               이번 주 획득: +{thisWeekEarnedStars}⭐ (최대 7⭐)
             </span>
@@ -249,6 +257,41 @@ export const StarRewardShopView: React.FC<StarRewardShopViewProps> = ({
           </div>
         </section>
       )}
+
+      {/* Heart Reward Ecosystem Integration Banner */}
+      <div
+        data-testid="star-shop-heart-banner"
+        className="bg-gradient-to-r from-pink-500/10 via-rose-500/10 to-amber-500/10 border border-pink-200/80 rounded-2xl p-4 sm:p-4.5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-pink-100 flex items-center justify-center text-xl shrink-0 shadow-inner">
+            💖
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-extrabold text-slate-800">
+                스타로 충전한 하트, 지금 바로 일상 보상으로 교환해 보세요!
+              </h4>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-pink-100 text-pink-700">
+                보유 하트 {availableHearts}개
+              </span>
+            </div>
+            <p className="text-xs text-slate-500 mt-0.5">
+              스타를 하트로 교환하거나 응원으로 모은 하트는 게임 시간, 간식 등 원하는 보상으로 교환할 수 있어요.
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          data-testid="star-shop-heart-exchange-link"
+          onClick={onOpenRewardExchange}
+          className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600 text-white font-extrabold text-xs shadow-sm shadow-pink-500/20 transition-all active:scale-95 shrink-0 cursor-pointer"
+        >
+          <Heart className="w-3.5 h-3.5 fill-white" />
+          <span>하트 보상 교환하기</span>
+        </button>
+      </div>
 
       {/* 4. Segmented Tabs (보상 교환소 vs 스타 원장 내역) */}
       <div className="flex border-b border-slate-200" role="tablist">

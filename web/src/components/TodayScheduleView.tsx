@@ -32,6 +32,7 @@ export interface TodayScheduleViewProps {
   onOpenPraiseModal?: (item?: ScheduleItem | null) => void;
   onOpenEditModal?: (item?: ScheduleItem | null) => void;
   onOpenParentPin?: (day?: WeekdayNumber) => void;
+  onOpenRewardExchange?: () => void;
 }
 
 export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
@@ -42,6 +43,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
   onOpenPraiseModal,
   onOpenEditModal,
   onOpenParentPin,
+  onOpenRewardExchange,
 }) => {
   const [, setRenderVersion] = useState(0);
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
@@ -67,6 +69,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
 
   const stats = store.getCompletionStats(items);
   const isParentMode = store.isParentMode();
+  const availableHearts = store.getAvailableHearts();
   const latestPraise = store.getLatestPraiseNote();
   const currentWeekday = store.getCurrentWeekday();
   const skippedTodayItems = store
@@ -261,7 +264,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
         <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10 space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold bg-white/20 backdrop-blur-sm px-2.5 py-0.5 rounded-full text-white">
                 {weekdayName}
@@ -269,9 +272,27 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
               <span className="text-xs text-blue-100 font-medium">일일 체크리스트</span>
             </div>
 
-            <div className="flex items-center gap-1.5 text-xs font-bold bg-white/15 px-3 py-1 rounded-full">
-              <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
-              <span data-testid="progress-percentage-text">{stats.percentage}%</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid="today-hero-reward-exchange-btn"
+                onClick={onOpenRewardExchange}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/20 hover:bg-white/30 active:bg-white/40 text-white text-xs font-bold border border-white/25 shadow-xs transition-all active:scale-95 cursor-pointer backdrop-blur-sm"
+                title="하트 보상 교환 모달 열기"
+              >
+                <Heart className="w-3.5 h-3.5 fill-rose-300 text-rose-300" />
+                <span>하트 보상 교환</span>
+                {availableHearts > 0 && (
+                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-black leading-none">
+                    {availableHearts}
+                  </span>
+                )}
+              </button>
+
+              <div className="flex items-center gap-1.5 text-xs font-bold bg-white/15 px-3 py-1 rounded-full">
+                <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
+                <span data-testid="progress-percentage-text">{stats.percentage}%</span>
+              </div>
             </div>
           </div>
 

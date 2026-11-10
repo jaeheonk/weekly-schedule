@@ -193,6 +193,7 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
           </div>
           <button
             type="button"
+            data-testid="close-reward-modal-btn"
             onClick={onClose}
             aria-label="닫기"
             className="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"

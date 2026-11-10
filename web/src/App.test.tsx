@@ -567,6 +567,75 @@ describe('App & Hash Navigation (Seam 2)', () => {
         });
         expect(screen.getByTestId('header-hearts-badge')).toHaveTextContent('25');
       });
+
+      it('opens RewardExchangeModal from TodayScheduleView hero card "하트 보상 교환" button (Issue 05)', async () => {
+        globalScheduleStore.setCurrentDate(new Date(2026, 10, 9));
+        globalScheduleStore.unlockParentMode();
+        globalScheduleStore.sendFamilyPraise({
+          hearts: 10,
+          sticker: 'star',
+          message: '잘했어!',
+        });
+
+        render(<App syncOnMount={false} />);
+
+        // Today view hero card has "하트 보상 교환" button
+        const todayExchangeBtn = screen.getByTestId('today-hero-reward-exchange-btn');
+        expect(todayExchangeBtn).toBeInTheDocument();
+        expect(todayExchangeBtn).toHaveTextContent('하트 보상 교환');
+
+        // Click exchange button
+        fireEvent.click(todayExchangeBtn);
+
+        // Modal opens immediately
+        expect(screen.getByTestId('reward-exchange-modal')).toBeInTheDocument();
+        expect(screen.getByTestId('available-hearts-value')).toHaveTextContent('10');
+
+        // Close modal
+        fireEvent.click(screen.getByTestId('close-reward-modal-btn'));
+        await waitFor(() => {
+          expect(screen.queryByTestId('reward-exchange-modal')).not.toBeInTheDocument();
+        });
+        // Still on Today view
+        expect(screen.getByTestId('today-view')).toBeInTheDocument();
+      });
+
+      it('opens RewardExchangeModal from StarRewardShopView banner without leaving Star Shop view (Issue 05)', async () => {
+        globalScheduleStore.setCurrentDate(new Date(2026, 10, 9));
+        globalScheduleStore.unlockParentMode();
+        globalScheduleStore.sendFamilyPraise({
+          hearts: 15,
+          sticker: 'heart',
+          message: '멋져요!',
+        });
+
+        render(<App syncOnMount={false} />);
+
+        // Switch to Star Reward Shop tab
+        fireEvent.click(screen.getByTestId('nav-tab-stars'));
+        expect(screen.getByTestId('star-reward-shop-view')).toBeInTheDocument();
+
+        // Banner has "하트 보상 교환하기" shortcut button
+        const bannerLink = screen.getByTestId('star-shop-heart-exchange-link');
+        expect(bannerLink).toBeInTheDocument();
+        expect(bannerLink).toHaveTextContent('하트 보상 교환하기');
+
+        // Click banner shortcut
+        fireEvent.click(bannerLink);
+
+        // Reward exchange modal opens over Star Reward Shop view
+        expect(screen.getByTestId('reward-exchange-modal')).toBeInTheDocument();
+        expect(screen.getByTestId('available-hearts-value')).toHaveTextContent('15');
+
+        // Close modal
+        fireEvent.click(screen.getByTestId('close-reward-modal-btn'));
+        await waitFor(() => {
+          expect(screen.queryByTestId('reward-exchange-modal')).not.toBeInTheDocument();
+        });
+
+        // User remains seamlessly in Star Reward Shop view
+        expect(screen.getByTestId('star-reward-shop-view')).toBeInTheDocument();
+      });
     });
   });
 });

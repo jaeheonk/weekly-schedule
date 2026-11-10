@@ -282,5 +282,35 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       fireEvent.click(restoreBtn);
       expect(store.isSkippedThisWeek(item2.id)).toBe(false);
     });
+
+    it('renders "하트 보상 교환" button in hero card and calls onOpenRewardExchange when clicked', () => {
+      const mockOpenReward = vi.fn();
+      store.sendFamilyPraise({
+        hearts: 15,
+        sticker: 'heart',
+        message: '응원 하트!',
+      });
+      expect(store.getAvailableHearts()).toBe(15);
+
+      render(
+        <TodayScheduleView
+          items={store.getTodayItems()}
+          weekdayName="월요일"
+          store={store}
+          onOpenRewardExchange={mockOpenReward}
+        />
+      );
+
+      // Hero card contains the exchange button
+      const heroCard = screen.getByTestId('progress-gauge-card');
+      const exchangeBtn = screen.getByTestId('today-hero-reward-exchange-btn');
+      expect(heroCard).toContainElement(exchangeBtn);
+      expect(exchangeBtn).toHaveTextContent('하트 보상 교환');
+      expect(exchangeBtn).toHaveTextContent('15');
+
+      // Clicking triggers callback
+      fireEvent.click(exchangeBtn);
+      expect(mockOpenReward).toHaveBeenCalledTimes(1);
+    });
   });
 });

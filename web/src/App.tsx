@@ -188,6 +188,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
           <StarRewardShopView
             store={globalScheduleStore}
             onOpenParentPin={() => setIsPinModalOpen(true)}
+            onOpenRewardExchange={() => setIsRewardModalOpen(true)}
           />
         ) : activeTab === 'today' ? (
           <TodayScheduleView
@@ -205,6 +206,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
               if (day) setPendingAwardDay(day as WeekdayNumber);
               setIsPinModalOpen(true);
             }}
+            onOpenRewardExchange={() => setIsRewardModalOpen(true)}
           />
         ) : (
           <WeeklyGridView
