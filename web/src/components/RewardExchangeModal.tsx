@@ -10,6 +10,7 @@ import {
   User,
   History,
   RotateCcw,
+  Settings,
 } from 'lucide-react';
 import { ScheduleStore } from '../domain/scheduleStore';
 import {
@@ -19,6 +20,7 @@ import {
 } from '../types/snapshot';
 import { playCompletionChime } from '../services/soundEffects';
 import { ParentPinModal } from './ParentPinModal';
+import { RewardPresetManageModal } from './RewardPresetManageModal';
 import { formatKoreanDateTime } from '../domain/calendarUtils';
 
 export interface RewardExchangeModalProps {
@@ -53,6 +55,9 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
   const [customTitle, setCustomTitle] = useState<string>('');
   const [heartsToSpend, setHeartsToSpend] = useState<number>(10);
   const [isPinModalOpen, setIsPinModalOpen] = useState<boolean>(false);
+  const [pinReason, setPinReason] = useState<string>('보상 교환 승인');
+  const [pendingPinAction, setPendingPinAction] = useState<(() => void) | null>(null);
+  const [isPresetManageModalOpen, setIsPresetManageModalOpen] = useState<boolean>(false);
   const [pendingRefund, setPendingRefund] = useState<HeartRewardRedemption | null>(null);
 
   // Initialize form with the first preset when opened
@@ -68,16 +73,22 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
     }
   }, [isOpen]);
 
-  // Close on Escape key
+  // Close on Escape key (only if no nested sub-modal is open)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
+      if (
+        e.key === 'Escape' &&
+        isOpen &&
+        !isPresetManageModalOpen &&
+        !isPinModalOpen &&
+        !pendingRefund
+      ) {
         onClose();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, isPresetManageModalOpen, isPinModalOpen, pendingRefund, onClose]);
 
   if (!isOpen) return null;
 
@@ -138,6 +149,18 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
     if (isParentMode) {
       executeRedemption();
     } else {
+      setPinReason('보상 교환 승인');
+      setPendingPinAction(() => () => executeRedemption());
+      setIsPinModalOpen(true);
+    }
+  };
+
+  const handleManagePresetsClick = () => {
+    if (isParentMode) {
+      setIsPresetManageModalOpen(true);
+    } else {
+      setPinReason('추천 보상 관리 승인');
+      setPendingPinAction(() => () => setIsPresetManageModalOpen(true));
       setIsPinModalOpen(true);
     }
   };
@@ -264,6 +287,16 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
               <h3 className="text-xs sm:text-sm font-bold text-slate-700">
                 자주 쓰는 추천 보상
               </h3>
+              <button
+                type="button"
+                data-testid="manage-presets-btn"
+                onClick={handleManagePresetsClick}
+                className="px-2.5 py-1 rounded-xl text-xs font-bold text-pink-600 hover:text-pink-700 hover:bg-pink-50 border border-pink-200/60 transition-colors flex items-center gap-1"
+                title="추천 보상 추가/수정/삭제"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>추천 보상 관리</span>
+              </button>
             </div>
 
             <div
@@ -634,12 +667,25 @@ export const RewardExchangeModal: React.FC<RewardExchangeModalProps> = ({
       {/* 6-Digit Master PIN Modal for Child Mode Authorization */}
       <ParentPinModal
         isOpen={isPinModalOpen}
-        onClose={() => setIsPinModalOpen(false)}
+        onClose={() => {
+          setIsPinModalOpen(false);
+          setPendingPinAction(null);
+        }}
         onSuccess={() => {
           setIsPinModalOpen(false);
-          executeRedemption();
+          if (pendingPinAction) {
+            pendingPinAction();
+            setPendingPinAction(null);
+          }
         }}
-        reason="보상 교환 승인"
+        reason={pinReason}
+        store={store}
+      />
+
+      {/* Preset Management Modal */}
+      <RewardPresetManageModal
+        isOpen={isPresetManageModalOpen}
+        onClose={() => setIsPresetManageModalOpen(false)}
         store={store}
       />
     </div>

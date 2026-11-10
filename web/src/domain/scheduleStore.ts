@@ -631,7 +631,11 @@ export class ScheduleStore {
       this.starRewardPresets = [...DEFAULT_STAR_PRESETS];
     }
     if (!this.rewardPresets || this.rewardPresets.length === 0) {
-      this.rewardPresets = [...DEFAULT_REWARD_PRESETS];
+      if (Object.keys(this.deletedRewardPresetTimestamps).length === 0) {
+        this.rewardPresets = [...DEFAULT_REWARD_PRESETS];
+      } else {
+        this.rewardPresets = [];
+      }
     }
   }
 
@@ -1101,10 +1105,73 @@ export class ScheduleStore {
   }
 
   public getRewardPresets(): RewardPreset[] {
-    if (!this.rewardPresets || this.rewardPresets.length === 0) {
-      return [...DEFAULT_REWARD_PRESETS];
-    }
-    return [...this.rewardPresets];
+    return (this.rewardPresets || []).filter((p) => {
+      const delTs = this.deletedRewardPresetTimestamps[p.id] || 0;
+      return delTs < p.updatedAt;
+    });
+  }
+
+  public addRewardPreset(
+    preset: Omit<RewardPreset, 'id' | 'updatedAt'>
+  ): RewardPreset {
+    const ts = currentEpochSeconds();
+    const newPreset: RewardPreset = {
+      ...preset,
+      id: generateEntityId('preset'),
+      updatedAt: ts,
+    };
+    delete this.deletedRewardPresetTimestamps[newPreset.id];
+    this.rewardPresets.push(newPreset);
+    this.saveSnapshotMeta();
+    this.notify();
+    this.emitToast(`🎁 [${newPreset.title}] 추천 보상이 추가되었어요.`, 'success');
+    return newPreset;
+  }
+
+  public updateRewardPreset(
+    id: string,
+    updates: Partial<Omit<RewardPreset, 'id' | 'updatedAt'>>
+  ): boolean {
+    const index = this.rewardPresets.findIndex((p) => p.id === id);
+    if (index === -1) return false;
+    const ts = currentEpochSeconds();
+    this.rewardPresets[index] = {
+      ...this.rewardPresets[index],
+      ...updates,
+      updatedAt: ts,
+    };
+    delete this.deletedRewardPresetTimestamps[id];
+    this.saveSnapshotMeta();
+    this.notify();
+    this.emitToast(
+      `✏️ [${this.rewardPresets[index].title}] 추천 보상이 수정되었어요.`,
+      'success'
+    );
+    return true;
+  }
+
+  public deleteRewardPreset(id: string): boolean {
+    const target = this.rewardPresets.find((p) => p.id === id);
+    if (!target) return false;
+    const ts = currentEpochSeconds();
+    this.deletedRewardPresetTimestamps[id] = ts;
+    this.rewardPresets = this.rewardPresets.filter((p) => p.id !== id);
+    this.saveSnapshotMeta();
+    this.notify();
+    this.emitToast(`🗑️ [${target.title}] 추천 보상이 삭제되었어요.`, 'success');
+    return true;
+  }
+
+  public resetRewardPresetsToDefault(): void {
+    const ts = currentEpochSeconds();
+    this.rewardPresets = DEFAULT_REWARD_PRESETS.map((preset) => ({
+      ...preset,
+      updatedAt: ts,
+    }));
+    this.deletedRewardPresetTimestamps = {};
+    this.saveSnapshotMeta();
+    this.notify();
+    this.emitToast('🔄 추천 보상이 초기 기본값으로 복원되었어요.', 'success');
   }
 
   public getRewardRedemptions(): HeartRewardRedemption[] {

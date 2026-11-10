@@ -379,4 +379,87 @@ describe('RewardExchangeModal (Seam 2 / Issue 01)', () => {
       expect(toasts).toContain('↩️ [선물 교환] 교환이 취소되어 하트 20개가 복구되었어요.');
     });
   });
+
+  describe('Preset Management & PIN Authorization (Seam 2 / Issue 04)', () => {
+    it('renders "추천 보상 관리" button in the preset recommendations header', () => {
+      render(<RewardExchangeModal isOpen={true} onClose={vi.fn()} store={store} />);
+
+      const manageBtn = screen.getByTestId('manage-presets-btn');
+      expect(manageBtn).toBeInTheDocument();
+      expect(manageBtn).toHaveTextContent('추천 보상 관리');
+    });
+
+    it('in child mode, clicking "추천 보상 관리" opens PIN modal and launches manage modal after valid PIN', () => {
+      render(<RewardExchangeModal isOpen={true} onClose={vi.fn()} store={store} />);
+
+      // Click "추천 보상 관리"
+      fireEvent.click(screen.getByTestId('manage-presets-btn'));
+
+      // PIN modal opens
+      expect(screen.getByTestId('parent-pin-modal')).toBeInTheDocument();
+      expect(screen.getByTestId('pin-reason-badge')).toHaveTextContent('추천 보상 관리 승인');
+      expect(screen.queryByTestId('preset-manage-modal')).not.toBeInTheDocument();
+
+      // Enter default PIN: 160125 via keypad
+      const correctPin = ['1', '6', '0', '1', '2', '5'];
+      for (const d of correctPin) {
+        fireEvent.click(screen.getByTestId(`keypad-btn-${d}`));
+      }
+
+      // PIN modal closes and preset manage modal opens
+      expect(screen.queryByTestId('parent-pin-modal')).not.toBeInTheDocument();
+      expect(screen.getByTestId('preset-manage-modal')).toBeInTheDocument();
+    });
+
+    it('in parent mode, clicking "추천 보상 관리" opens preset manage modal immediately without PIN', () => {
+      store.unlockParentMode();
+      render(<RewardExchangeModal isOpen={true} onClose={vi.fn()} store={store} />);
+
+      fireEvent.click(screen.getByTestId('manage-presets-btn'));
+
+      // No PIN modal; manage modal is immediately opened
+      expect(screen.queryByTestId('parent-pin-modal')).not.toBeInTheDocument();
+      expect(screen.getByTestId('preset-manage-modal')).toBeInTheDocument();
+    });
+
+    it('preset modifications from manage modal immediately update preset cards in exchange modal', () => {
+      store.unlockParentMode();
+      render(<RewardExchangeModal isOpen={true} onClose={vi.fn()} store={store} />);
+
+      // Initially 8 preset cards
+      expect(screen.getAllByTestId(/^preset-card-/)).toHaveLength(8);
+
+      // Open manage modal
+      fireEvent.click(screen.getByTestId('manage-presets-btn'));
+
+      // Add a new preset
+      fireEvent.click(screen.getByTestId('add-preset-btn'));
+      fireEvent.click(screen.getByTestId('emoji-option-🍕'));
+      fireEvent.change(screen.getByTestId('preset-title-input'), {
+        target: { value: '금요일 피자 파티' },
+      });
+      fireEvent.change(screen.getByTestId('preset-hearts-input'), {
+        target: { value: '25' },
+      });
+      fireEvent.click(screen.getByTestId('save-preset-btn'));
+
+      // Close manage modal
+      fireEvent.click(screen.getByTestId('close-preset-manage-modal-btn'));
+
+      // Now 9 preset cards in exchange modal, including the new pizza party preset
+      const cards = screen.getAllByTestId(/^preset-card-/);
+      expect(cards).toHaveLength(9);
+      expect(screen.getByText('금요일 피자 파티')).toBeInTheDocument();
+      expect(screen.getByText('25개')).toBeInTheDocument();
+
+      // Click on newly added preset card
+      const newCard = screen.getByText('금요일 피자 파티').closest('button');
+      expect(newCard).toBeInTheDocument();
+      fireEvent.click(newCard!);
+
+      // Form inputs populate with new preset data
+      expect(screen.getByTestId('reward-title-input')).toHaveValue('금요일 피자 파티');
+      expect(screen.getByTestId('hearts-to-spend-value')).toHaveTextContent('25');
+    });
+  });
 });

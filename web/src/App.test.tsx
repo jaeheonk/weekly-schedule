@@ -505,6 +505,68 @@ describe('App & Hash Navigation (Seam 2)', () => {
         expect(toast).toHaveTextContent('게임 30분');
         expect(toast).toHaveTextContent('하트 10개가 복구되었어요');
       });
+
+      it('allows parent to manage reward presets from RewardExchangeModal and immediately reflects changes end-to-end (Issue 04)', async () => {
+        globalScheduleStore.setCurrentDate(new Date(2026, 10, 9));
+        globalScheduleStore.unlockParentMode();
+        globalScheduleStore.sendFamilyPraise({
+          hearts: 50,
+          sticker: 'heart',
+          message: '수고했어!',
+        });
+
+        render(<App syncOnMount={false} />);
+
+        // Open RewardExchangeModal from header badge
+        fireEvent.click(screen.getByTestId('header-hearts-badge'));
+        expect(screen.getByTestId('reward-exchange-modal')).toBeInTheDocument();
+
+        // Initially 8 presets
+        expect(screen.getAllByTestId(/^preset-card-/)).toHaveLength(8);
+
+        // Click "추천 보상 관리" button
+        fireEvent.click(screen.getByTestId('manage-presets-btn'));
+
+        // Preset management modal opens
+        expect(screen.getByTestId('preset-manage-modal')).toBeInTheDocument();
+
+        // Add a new custom preset (🍕 가족 피자 파티, 25 hearts)
+        fireEvent.click(screen.getByTestId('add-preset-btn'));
+        expect(screen.getByTestId('preset-form-modal')).toBeInTheDocument();
+        fireEvent.click(screen.getByTestId('emoji-option-🍕'));
+        fireEvent.change(screen.getByTestId('preset-title-input'), {
+          target: { value: '가족 피자 파티' },
+        });
+        fireEvent.change(screen.getByTestId('preset-hearts-input'), {
+          target: { value: '25' },
+        });
+        fireEvent.click(screen.getByTestId('save-preset-btn'));
+
+        // Close manage modal
+        fireEvent.click(screen.getByTestId('close-preset-manage-modal-btn'));
+        expect(screen.queryByTestId('preset-manage-modal')).not.toBeInTheDocument();
+
+        // Exchange modal reflects the new preset (now 9 cards)
+        expect(screen.getAllByTestId(/^preset-card-/)).toHaveLength(9);
+        expect(screen.getByText('가족 피자 파티')).toBeInTheDocument();
+
+        // Select the newly added preset
+        const newPresetCard = screen.getByText('가족 피자 파티').closest('button');
+        fireEvent.click(newPresetCard!);
+
+        // Form fields update
+        expect(screen.getByTestId('reward-title-input')).toHaveValue('가족 피자 파티');
+        expect(screen.getByTestId('hearts-to-spend-value')).toHaveTextContent('25');
+
+        // Redeem the newly added preset
+        fireEvent.click(screen.getByTestId('redeem-submit-btn'));
+
+        // Modal closes, header badge updates from 50 to 25
+        await waitFor(() => {
+          expect(screen.queryByTestId('reward-exchange-modal')).not.toBeInTheDocument();
+        });
+        expect(screen.getByTestId('header-hearts-badge')).toHaveTextContent('25');
+      });
     });
   });
 });

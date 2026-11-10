@@ -1030,5 +1030,100 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(store.refundRewardRedemption('non-existent-id')).toBe(false);
       expect(store.getAvailableHearts()).toBe(25);
     });
+
+    it('manages custom reward presets: add, update, delete with tombstone tracking, and reset to defaults (Issue 04)', () => {
+      const store = new ScheduleStore();
+      let notifyCount = 0;
+      store.subscribe(() => {
+        notifyCount += 1;
+      });
+
+      const toasts: Array<{ message: string; status?: string }> = [];
+      store.onToast((msg, status) => {
+        toasts.push({ message: msg, status });
+      });
+
+      // 1. Initial defaults
+      const initialPresets = store.getRewardPresets();
+      expect(initialPresets).toHaveLength(8);
+      expect(initialPresets[0].title).toBe('자유 놀이 / 게임 30분');
+
+      // 2. Add custom preset
+      const prevNotifyCount = notifyCount;
+      const created = store.addRewardPreset({
+        emoji: '🍕',
+        title: '금요일 피자 파티',
+        hearts: 25,
+        tag: '외식',
+      });
+
+      expect(created.id).toBeDefined();
+      expect(created.emoji).toBe('🍕');
+      expect(created.title).toBe('금요일 피자 파티');
+      expect(created.hearts).toBe(25);
+      expect(created.tag).toBe('외식');
+      expect(created.updatedAt).toBeGreaterThan(0);
+      expect(notifyCount).toBe(prevNotifyCount + 1);
+
+      const presetsAfterAdd = store.getRewardPresets();
+      expect(presetsAfterAdd).toHaveLength(9);
+      expect(presetsAfterAdd.find((p) => p.id === created.id)).toBeDefined();
+      expect(toasts[toasts.length - 1].message).toContain('추천 보상이 추가되었어요');
+
+      // 3. Update preset
+      const updateNotifyCount = notifyCount;
+      const updateOk = store.updateRewardPreset(created.id, {
+        title: '주말 피자 뷔페',
+        hearts: 30,
+      });
+      expect(updateOk).toBe(true);
+      expect(notifyCount).toBe(updateNotifyCount + 1);
+
+      const presetsAfterUpdate = store.getRewardPresets();
+      const updatedItem = presetsAfterUpdate.find((p) => p.id === created.id);
+      expect(updatedItem).toBeDefined();
+      expect(updatedItem?.title).toBe('주말 피자 뷔페');
+      expect(updatedItem?.hearts).toBe(30);
+      expect(updatedItem?.emoji).toBe('🍕');
+      expect(toasts[toasts.length - 1].message).toContain('추천 보상이 수정되었어요');
+
+      // 4. Delete preset with tombstone
+      const deleteNotifyCount = notifyCount;
+      const deleteOk = store.deleteRewardPreset(created.id);
+      expect(deleteOk).toBe(true);
+      expect(notifyCount).toBe(deleteNotifyCount + 1);
+
+      const presetsAfterDelete = store.getRewardPresets();
+      expect(presetsAfterDelete).toHaveLength(8);
+      expect(presetsAfterDelete.find((p) => p.id === created.id)).toBeUndefined();
+      expect(toasts[toasts.length - 1].message).toContain('추천 보상이 삭제되었어요');
+
+      // Snapshot verification for tombstone
+      const snapshot = store.makeCurrentSnapshot();
+      expect(snapshot.deletedRewardPresetTimestamps[created.id]).toBeGreaterThan(0);
+      expect(snapshot.rewardPresets.find((p) => p.id === created.id)).toBeUndefined();
+
+      // 5. Delete an initial default preset as well
+      const firstDefaultId = initialPresets[0].id;
+      store.deleteRewardPreset(firstDefaultId);
+      expect(store.getRewardPresets()).toHaveLength(7);
+      expect(store.getRewardPresets().find((p) => p.id === firstDefaultId)).toBeUndefined();
+
+      // Verify that reloaded store respects the deletion tombstone
+      const reloadedStore = new ScheduleStore();
+      expect(reloadedStore.getRewardPresets()).toHaveLength(7);
+      expect(reloadedStore.getRewardPresets().find((p) => p.id === firstDefaultId)).toBeUndefined();
+
+      // 6. Reset to defaults
+      const resetNotifyCount = notifyCount;
+      store.resetRewardPresetsToDefault();
+      expect(notifyCount).toBe(resetNotifyCount + 1);
+      expect(store.getRewardPresets()).toHaveLength(8);
+      expect(store.getRewardPresets().find((p) => p.id === firstDefaultId)).toBeDefined();
+      expect(toasts[toasts.length - 1].message).toContain('초기 기본값으로 복원');
+
+      const reloadedAfterReset = new ScheduleStore();
+      expect(reloadedAfterReset.getRewardPresets()).toHaveLength(8);
+    });
   });
 });
