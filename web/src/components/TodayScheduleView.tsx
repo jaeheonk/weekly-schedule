@@ -54,6 +54,8 @@ export interface TodayScheduleViewProps {
   onOpenParentPin?: (day?: WeekdayNumber) => void;
   onRequestParentAuth?: (reason: string, action: () => void) => void;
   onOpenRewardExchange?: () => void;
+  /** 스타 보상 상점 모달 열기 (iOS StarRewardShopSheet와 동일하게 시트/모달로 표시) */
+  onOpenStarShop?: () => void;
 }
 
 const CATEGORY_ORDER: ScheduleCategoryType[] = [
@@ -91,6 +93,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
   onOpenParentPin,
   onRequestParentAuth,
   onOpenRewardExchange,
+  onOpenStarShop,
 }) => {
   const [, setRenderVersion] = useState(0);
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
@@ -541,7 +544,11 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
         store={store}
         onTapWeekdaySlot={(day) => store.setSelectedWeekday(day)}
         onTapStarShop={() => {
-          window.location.hash = '#stars';
+          if (onOpenStarShop) {
+            onOpenStarShop();
+          } else {
+            window.location.hash = '#stars';
+          }
         }}
         onRequestAwardStar={(day) => {
           if (store.isParentMode()) {

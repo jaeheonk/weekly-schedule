@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Navigation } from './components/Navigation';
+import { Navigation, MainTab } from './components/Navigation';
 import { TodayScheduleView } from './components/TodayScheduleView';
 import { WeeklyGridView } from './components/WeeklyGridView';
-import { StarRewardShopView } from './components/StarRewardShopView';
+import { StarRewardShopModal } from './components/StarRewardShopModal';
 import { StarCelebrationModal } from './components/StarCelebrationModal';
 import { SyncToast, SyncStatus } from './components/SyncToast';
 import { ParentPinModal } from './components/ParentPinModal';
@@ -20,17 +20,19 @@ export interface AppProps {
 }
 
 export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
-  const getTabFromHash = (): 'today' | 'weekly' | 'stars' => {
+  const getTabFromHash = (): MainTab => {
     const hash = window.location.hash.toLowerCase();
     if (hash === '#weekly') return 'weekly';
-    if (hash === '#stars') return 'stars';
     return 'today';
   };
 
   const isPrintHash = (): boolean => window.location.hash.toLowerCase() === '#print';
+  // 예전 '스타 상점' 탭 주소(#stars)는 오늘의 할 일 위에 스타 상점 모달을 띄우는 딥 링크로 유지한다.
+  const isStarShopHash = (): boolean => window.location.hash.toLowerCase() === '#stars';
 
-  const [activeTab, setActiveTab] = useState<'today' | 'weekly' | 'stars'>(getTabFromHash);
+  const [activeTab, setActiveTab] = useState<MainTab>(getTabFromHash);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState<boolean>(isPrintHash);
+  const [isStarShopOpen, setIsStarShopOpen] = useState<boolean>(isStarShopHash);
   const [printScope, setPrintScope] = useState<ScheduleEditScope>('master');
   const [isParentMode, setIsParentMode] = useState<boolean>(() =>
     globalScheduleStore.isParentMode()
@@ -102,8 +104,11 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
       const hash = window.location.hash.toLowerCase();
       if (hash === '#print') {
         setIsPrintModalOpen(true);
+      } else if (hash === '#stars') {
+        setIsStarShopOpen(true);
       } else {
         setIsPrintModalOpen(false);
+        setIsStarShopOpen(false);
         setActiveTab(getTabFromHash());
       }
     };
@@ -123,6 +128,18 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
   const handleClosePrint = () => {
     setIsPrintModalOpen(false);
     if (window.location.hash.toLowerCase() === '#print') {
+      window.location.hash = `#${activeTab}`;
+    }
+  };
+
+  const handleOpenStarShop = () => {
+    window.location.hash = '#stars';
+    setIsStarShopOpen(true);
+  };
+
+  const handleCloseStarShop = () => {
+    setIsStarShopOpen(false);
+    if (window.location.hash.toLowerCase() === '#stars') {
       window.location.hash = `#${activeTab}`;
     }
   };
@@ -172,7 +189,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
     return () => clearTimeout(timer);
   }, [localToast]);
 
-  const handleSelectTab = (tab: 'today' | 'weekly' | 'stars') => {
+  const handleSelectTab = (tab: MainTab) => {
     window.location.hash = `#${tab}`;
     setActiveTab(tab);
   };
@@ -201,19 +218,15 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
         onOpenParentPin={() => setPinPrompt({})}
         onLockParentMode={() => globalScheduleStore.lockParentMode()}
         onOpenRewardExchange={() => setIsRewardModalOpen(true)}
+        onOpenStarShop={handleOpenStarShop}
+        isStarShopOpen={isStarShopOpen}
         availableHearts={availableHearts}
         availableStars={availableStars}
         pendingStarRedemptions={pendingStarRedemptions}
       />
 
       <main className="flex-1 pb-12">
-        {activeTab === 'stars' ? (
-          <StarRewardShopView
-            store={globalScheduleStore}
-            onOpenParentPin={() => setPinPrompt({})}
-            onOpenRewardExchange={() => setIsRewardModalOpen(true)}
-          />
-        ) : activeTab === 'today' ? (
+        {activeTab === 'today' ? (
           <TodayScheduleView
             weekdayName={currentWeekdayInfo?.fullName || '오늘'}
             store={globalScheduleStore}
@@ -234,6 +247,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
               setPinPrompt({ reason, onConfirm: action });
             }}
             onOpenRewardExchange={() => setIsRewardModalOpen(true)}
+            onOpenStarShop={handleOpenStarShop}
           />
         ) : (
           <WeeklyGridView
@@ -244,6 +258,14 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
           />
         )}
       </main>
+
+      {/* ⭐ Star Reward Shop Modal (iOS StarRewardShopSheet parity — 상단 탭 대신 모달) */}
+      <StarRewardShopModal
+        isOpen={isStarShopOpen}
+        onClose={handleCloseStarShop}
+        onOpenRewardExchange={() => setIsRewardModalOpen(true)}
+        store={globalScheduleStore}
+      />
 
       {/* 6-Digit Master PIN Authentication Modal */}
       <ParentPinModal
@@ -264,7 +286,7 @@ export const App: React.FC<AppProps> = ({ syncOnMount = true }) => {
         onClose={() => globalScheduleStore.clearCelebrationContext()}
         onOpenStarShop={() => {
           globalScheduleStore.clearCelebrationContext();
-          handleSelectTab('stars');
+          handleOpenStarShop();
         }}
         context={celebrationContext}
       />
