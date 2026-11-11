@@ -23,12 +23,15 @@ export interface StarRewardShopViewProps {
   store?: ScheduleStore;
   onOpenParentPin?: () => void;
   onOpenRewardExchange?: () => void;
+  /** 'modal': 스타 상점 모달 안에 표시할 때 바깥 여백을 줄인다 */
+  variant?: 'page' | 'modal';
 }
 
 export const StarRewardShopView: React.FC<StarRewardShopViewProps> = ({
   store = globalScheduleStore,
   onOpenParentPin,
   onOpenRewardExchange,
+  variant = 'page',
 }) => {
   const [, setRenderVersion] = useState(0);
   const [selectedTab, setSelectedTab] = useState<'rewards' | 'ledger'>('rewards');
@@ -123,7 +126,12 @@ export const StarRewardShopView: React.FC<StarRewardShopViewProps> = ({
   const formatTimestamp = formatKoreanDateTime;
 
   return (
-    <div data-testid="star-reward-shop-view" className="max-w-4xl mx-auto px-4 py-6 space-y-5">
+    <div
+      data-testid="star-reward-shop-view"
+      className={
+        variant === 'modal' ? 'space-y-5' : 'max-w-4xl mx-auto px-4 py-6 space-y-5'
+      }
+    >
       {/* 1. Hero Balance & Goal Progress Card */}
       <div
         data-testid="star-balance-hero-card"

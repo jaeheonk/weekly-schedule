@@ -14,9 +14,11 @@ import {
 import { getWeekdayNumber, getWeekKey } from '../domain/calendarUtils';
 import { WEEKDAYS } from '../types/schedule';
 
+export type MainTab = 'today' | 'weekly';
+
 export interface NavigationProps {
-  activeTab: 'today' | 'weekly' | 'stars';
-  onSelectTab: (tab: 'today' | 'weekly' | 'stars') => void;
+  activeTab: MainTab;
+  onSelectTab: (tab: MainTab) => void;
   currentDate?: Date;
   isSyncing?: boolean;
   onSync?: () => void;
@@ -25,6 +27,9 @@ export interface NavigationProps {
   onOpenParentPin?: () => void;
   onLockParentMode?: () => void;
   onOpenRewardExchange?: () => void;
+  /** ⭐ 스타 배지를 누르면 스타 보상 상점 모달을 연다 (iOS처럼 탭이 아닌 시트) */
+  onOpenStarShop?: () => void;
+  isStarShopOpen?: boolean;
   availableHearts?: number;
   availableStars?: number;
   pendingStarRedemptions?: number;
@@ -41,6 +46,8 @@ export const Navigation: React.FC<NavigationProps> = ({
   onOpenParentPin,
   onLockParentMode,
   onOpenRewardExchange,
+  onOpenStarShop,
+  isStarShopOpen = false,
   availableHearts = 0,
   availableStars = 0,
   pendingStarRedemptions = 0,
@@ -91,18 +98,19 @@ export const Navigation: React.FC<NavigationProps> = ({
 
             <button
               type="button"
-              onClick={() => onSelectTab('stars')}
+              onClick={onOpenStarShop}
               data-testid="header-stars-badge"
               className={`flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded-full text-xs font-bold transition-all border shadow-xs shrink-0 ${
-                activeTab === 'stars'
+                isStarShopOpen
                   ? 'bg-amber-500 text-white border-amber-600 shadow-sm'
                   : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200/80'
               }`}
-              title={`스타 상점 (보유 스타: ${availableStars}개)`}
+              title={`스타 보상 상점 열기 (보유 스타: ${availableStars}개)`}
+              aria-label={`스타 보상 상점 열기 (보유 스타 ${availableStars}개)`}
             >
               <Star
                 className={`w-3.5 h-3.5 ${
-                  activeTab === 'stars'
+                  isStarShopOpen
                     ? 'fill-yellow-200 text-yellow-200'
                     : 'fill-amber-500 text-amber-500'
                 }`}
@@ -196,7 +204,7 @@ export const Navigation: React.FC<NavigationProps> = ({
         </div>
 
         {/* View Switcher Tabs (Row 3 on mobile, Right column on desktop) */}
-        <nav aria-label="메인 내비게이션" className="grid grid-cols-3 sm:flex items-center bg-slate-100 p-1 rounded-xl w-full sm:w-auto border border-slate-200/80">
+        <nav aria-label="메인 내비게이션" className="grid grid-cols-2 sm:flex items-center bg-slate-100 p-1 rounded-xl w-full sm:w-auto border border-slate-200/80">
           <button
             type="button"
             onClick={() => onSelectTab('today')}
@@ -223,19 +231,6 @@ export const Navigation: React.FC<NavigationProps> = ({
             <span className="truncate">주간 시간표</span>
           </button>
 
-          <button
-            type="button"
-            data-testid="nav-tab-stars"
-            onClick={() => onSelectTab('stars')}
-            className={`flex items-center justify-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all duration-200 ${
-              activeTab === 'stars'
-                ? 'bg-amber-500 text-white shadow-sm'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-            }`}
-          >
-            <Star className="w-3.5 h-3.5 sm:w-4 sm:h-4 shrink-0" />
-            <span className="truncate">스타 상점</span>
-          </button>
         </nav>
       </div>
     </header>

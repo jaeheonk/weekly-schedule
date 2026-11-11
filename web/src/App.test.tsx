@@ -267,21 +267,47 @@ describe('App & Hash Navigation (Seam 2)', () => {
     });
 
     describe('Star Ledger, Hash Routing & Reward Shop Integration (Seam 3 / Issue 06)', () => {
-      it('navigates to #stars shop via header badge and tab, and displays star balance', async () => {
+      it('has no Star Shop tab in the top navigation; header star badge opens the Star Shop modal like the heart shop', async () => {
         render(<App syncOnMount={false} />);
+
+        // 상단 메뉴에 스타 상점 탭이 없다 (iOS처럼 시트로만 연다)
+        expect(screen.queryByTestId('nav-tab-stars')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^스타 상점$/ })).not.toBeInTheDocument();
 
         // Header star badge exists
         const headerBadge = screen.getByTestId('header-stars-badge');
         expect(headerBadge).toBeInTheDocument();
         expect(headerBadge).toHaveTextContent('0');
 
-        // Click Star Shop tab in navigation
-        const starTab = screen.getByTestId('nav-tab-stars');
-        fireEvent.click(starTab);
+        fireEvent.click(headerBadge);
 
         expect(window.location.hash).toBe('#stars');
+        const modal = screen.getByTestId('star-shop-modal');
+        expect(modal).toHaveAttribute('role', 'dialog');
         expect(screen.getByTestId('star-reward-shop-view')).toBeInTheDocument();
         expect(screen.getByTestId('star-balance-hero-card')).toBeInTheDocument();
+        // 모달 뒤에는 오늘의 할 일 화면이 그대로 있다
+        expect(screen.getByTestId('today-view')).toBeInTheDocument();
+
+        // 닫으면 원래 탭 주소로 돌아간다
+        fireEvent.click(screen.getByTestId('close-star-shop-modal-btn'));
+        expect(screen.queryByTestId('star-shop-modal')).not.toBeInTheDocument();
+        expect(window.location.hash).toBe('#today');
+      });
+
+      it('opens the Star Shop modal over the current tab when loaded with the legacy #stars deep link', () => {
+        window.location.hash = '#stars';
+        render(<App syncOnMount={false} />);
+
+        expect(screen.getByTestId('star-shop-modal')).toBeInTheDocument();
+        expect(screen.getByTestId('today-view')).toBeInTheDocument();
+      });
+
+      it('opens the Star Shop modal from the weekly star stamp board shop button', () => {
+        render(<App syncOnMount={false} />);
+        fireEvent.click(screen.getByTestId('stamp-board-shop-button'));
+        expect(screen.getByTestId('star-shop-modal')).toBeInTheDocument();
+        expect(window.location.hash).toBe('#stars');
       });
 
       it('awards daily star upon completing all tasks and triggers celebration modal', async () => {
@@ -613,8 +639,8 @@ describe('App & Hash Navigation (Seam 2)', () => {
 
         render(<App syncOnMount={false} />);
 
-        // Switch to Star Reward Shop tab
-        fireEvent.click(screen.getByTestId('nav-tab-stars'));
+        // Open Star Reward Shop modal from header star badge
+        fireEvent.click(screen.getByTestId('header-stars-badge'));
         expect(screen.getByTestId('star-reward-shop-view')).toBeInTheDocument();
 
         // Banner has "하트 보상 교환하기" shortcut button
@@ -635,7 +661,8 @@ describe('App & Hash Navigation (Seam 2)', () => {
           expect(screen.queryByTestId('reward-exchange-modal')).not.toBeInTheDocument();
         });
 
-        // User remains seamlessly in Star Reward Shop view
+        // User remains seamlessly in Star Reward Shop modal
+        expect(screen.getByTestId('star-shop-modal')).toBeInTheDocument();
         expect(screen.getByTestId('star-reward-shop-view')).toBeInTheDocument();
       });
     });
@@ -668,11 +695,11 @@ describe('App & Hash Navigation (Seam 2)', () => {
           expect(globalScheduleStore.getSelectedWeekday()).toBe(4);
           expect(screen.getByTestId('weekday-btn-4')).toHaveAttribute('data-selected', 'true');
 
-          // Navigate to Star Shop tab (#stars) and back to Today (#today)
-          fireEvent.click(screen.getByTestId('nav-tab-stars'));
+          // Open Star Shop modal and close it again
+          fireEvent.click(screen.getByTestId('header-stars-badge'));
           expect(screen.getByTestId('star-reward-shop-view')).toBeInTheDocument();
 
-          fireEvent.click(screen.getByRole('button', { name: /오늘의 할 일/i }));
+          fireEvent.click(screen.getByTestId('close-star-shop-modal-btn'));
           expect(globalScheduleStore.getSelectedWeekday()).toBe(4);
           expect(screen.getByTestId('weekday-btn-4')).toHaveAttribute('data-selected', 'true');
 

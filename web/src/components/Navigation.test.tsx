@@ -65,25 +65,35 @@ describe('Navigation Header Component', () => {
     expect(defaultProps.onLockParentMode).toHaveBeenCalled();
   });
 
-  it('renders responsive 3-tab navigation grid and handles tab clicks', () => {
+  it('renders responsive 2-tab navigation grid without a Star Shop tab and handles tab clicks', () => {
     const onSelectTab = vi.fn();
     render(<Navigation {...defaultProps} onSelectTab={onSelectTab} />);
 
     const nav = screen.getByRole('navigation', { name: '메인 내비게이션' });
     expect(nav.className).toContain('grid');
-    expect(nav.className).toContain('grid-cols-3');
+    expect(nav.className).toContain('grid-cols-2');
+    expect(screen.queryByTestId('nav-tab-stars')).not.toBeInTheDocument();
+    expect(nav.querySelectorAll('button')).toHaveLength(2);
 
     const todayTab = screen.getByRole('button', { name: /오늘의 할 일/i });
     const weeklyTab = screen.getByRole('button', { name: /주간 시간표/i });
-    const starShopTab = screen.getByTestId('nav-tab-stars');
 
     fireEvent.click(weeklyTab);
     expect(onSelectTab).toHaveBeenCalledWith('weekly');
 
-    fireEvent.click(starShopTab);
-    expect(onSelectTab).toHaveBeenCalledWith('stars');
-
     fireEvent.click(todayTab);
     expect(onSelectTab).toHaveBeenCalledWith('today');
+  });
+
+  it('opens the Star Shop modal (not a tab) when the header star badge is tapped', () => {
+    const onSelectTab = vi.fn();
+    const onOpenStarShop = vi.fn();
+    render(
+      <Navigation {...defaultProps} onSelectTab={onSelectTab} onOpenStarShop={onOpenStarShop} />
+    );
+
+    fireEvent.click(screen.getByTestId('header-stars-badge'));
+    expect(onOpenStarShop).toHaveBeenCalledTimes(1);
+    expect(onSelectTab).not.toHaveBeenCalled();
   });
 });
