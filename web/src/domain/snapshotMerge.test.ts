@@ -7,6 +7,7 @@ import {
   mergeStarRedemptionRequests,
   normalizeCompoundKey,
   normalizeItemsToCanonicalIDs,
+  areSnapshotsSyncEquivalent,
 } from './snapshotMerge';
 import { CloudSyncSnapshot, SyncTimestampedFlag, StarTransaction, StarRedemptionRequest } from '../types/snapshot';
 import { ScheduleItem } from '../types/schedule';
@@ -423,6 +424,76 @@ describe('snapshotMerge domain logic', () => {
       expect(merged.itemReactions.item_1.sticker).toBe('crown');
       expect(merged.itemReactions.item_1.comments).toHaveLength(2);
       expect(merged.itemReactions.item_1.comment).toBe('최고야!');
+    });
+
+    it('prevents cancelled reward redemption resurrection case-insensitively', () => {
+      const redemption = {
+        id: 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff',
+        title: '취소 보상',
+        hearts: 10,
+        createdAt: 1000,
+        redeemedByRole: '부모',
+      };
+      const local = makeEmptySnapshot({
+        rewardRedemptions: [],
+        revokedRewardRedemptionIds: ['BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF'],
+      });
+      const remote = makeEmptySnapshot({
+        rewardRedemptions: [redemption],
+      });
+
+      const merged = mergeSnapshots(local, remote);
+      expect(merged.rewardRedemptions).toHaveLength(0);
+      expect(merged.revokedRewardRedemptionIds).toContain('BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF');
+    });
+
+    it('preserves all reward redemptions past 50 items', () => {
+      const fifty = Array.from({ length: 50 }, (_, i) => ({
+        id: `R-${i}`,
+        title: `보상 ${i}`,
+        hearts: 10,
+        createdAt: 1000 + i,
+        redeemedByRole: '부모',
+      }));
+      const local = makeEmptySnapshot({
+        rewardRedemptions: [
+          ...fifty,
+          { id: 'R-51', title: '51번째', hearts: 10, createdAt: 2000, redeemedByRole: '부모' },
+        ],
+      });
+      const remote = makeEmptySnapshot({ rewardRedemptions: fifty });
+
+      const merged = mergeSnapshots(local, remote);
+      expect(merged.rewardRedemptions).toHaveLength(51);
+    });
+    it('areSnapshotsSyncEquivalent ignores volatile metadata and array ordering while detecting real state differences', () => {
+      const a = makeEmptySnapshot({
+        updatedAt: 100,
+        updatedByRole: '부모',
+        updatedByDeviceId: 'dev-a',
+        revokedRewardRedemptionIds: ['bbbbbbbb-cccc-dddd-eeee-ffffffffffff'],
+        rewardRedemptions: [
+          { id: 'R1', title: '보상1', hearts: 5, createdAt: 10, redeemedByRole: '부모' },
+          { id: 'R2', title: '보상2', hearts: 10, createdAt: 20, redeemedByRole: '부모' },
+        ],
+      });
+      const b = makeEmptySnapshot({
+        updatedAt: 999,
+        updatedByRole: '아이',
+        updatedByDeviceId: 'dev-b',
+        revokedRewardRedemptionIds: ['BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF'],
+        rewardRedemptions: [
+          { id: 'R2', title: '보상2', hearts: 10, createdAt: 20, redeemedByRole: '부모' },
+          { id: 'R1', title: '보상1', hearts: 5, createdAt: 10, redeemedByRole: '부모' },
+        ],
+      });
+      expect(areSnapshotsSyncEquivalent(a, b)).toBe(true);
+
+      const c = makeEmptySnapshot({
+        ...a,
+        rewardRedemptions: [a.rewardRedemptions[0]],
+      });
+      expect(areSnapshotsSyncEquivalent(a, c)).toBe(false);
     });
   });
 });

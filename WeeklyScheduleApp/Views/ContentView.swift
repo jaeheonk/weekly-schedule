@@ -158,11 +158,24 @@ struct ContentView: View {
             } else if newPhase == .background {
                 #if os(iOS)
                 BackgroundRefreshManager.shared.scheduleAppRefresh()
+                var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+                bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "FlushPendingCloudPush") {
+                    if bgTaskId != .invalid {
+                        UIApplication.shared.endBackgroundTask(bgTaskId)
+                        bgTaskId = .invalid
+                    }
+                }
                 #endif
                 store.lockParentMode()
                 notificationManager.stopPreviewSound()
                 Task {
                     await store.flushPendingPush()
+                    #if os(iOS)
+                    if bgTaskId != .invalid {
+                        UIApplication.shared.endBackgroundTask(bgTaskId)
+                        bgTaskId = .invalid
+                    }
+                    #endif
                 }
             } else {
                 store.lockParentMode()

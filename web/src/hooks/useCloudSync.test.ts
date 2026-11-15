@@ -347,4 +347,102 @@ describe('useCloudSync Hook', () => {
 
     expect(fetchSpy).toHaveBeenCalled();
   });
+
+  it('auto-uploads stranded local redemption after merging differing remote snapshot without ping-ponging', async () => {
+    localStorage.clear();
+    store = new ScheduleStore();
+    store.sendFamilyPraise({ hearts: 25, sticker: 'heart', message: '초기 하트' });
+    const remote25 = store.makeCurrentSnapshot();
+
+    // Parent already redeemed 10 locally (15 remaining) before hook mounted
+    expect(store.redeemReward('자유 놀이 / 게임 15분', 10)).toBe(true);
+    expect(store.getAvailableHearts()).toBe(15);
+
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
+      latest: { url: 'https://blob.test/state-25.json', pathname: 'families/family-main/state-25.json' },
+      snapshot: remote25,
+      allBlobs: [{ url: 'https://blob.test/state-25.json', pathname: 'families/family-main/state-25.json' }],
+    });
+    const uploadSpy = vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({
+      url: 'https://blob.test/state-15.json',
+      pathname: 'families/family-main/state-15.json',
+    });
+
+    const { result } = renderHook(() =>
+      useCloudSync({ store, syncService, pollingIntervalMs: 0, syncOnMount: false })
+    );
+
+    await act(async () => {
+      await result.current.triggerSync({ isManual: false });
+    });
+
+    // Must detect post-merge divergence (15 vs 25) and auto-upload the 15-heart state!
+    expect(uploadSpy).toHaveBeenCalledTimes(1);
+    expect(uploadSpy.mock.calls[0][0].rewardRedemptions).toHaveLength(1);
+    expect(store.getAvailableHearts()).toBe(15);
+
+    // Next sync when remote has converged must NOT re-upload
+    const converged = store.makeCurrentSnapshot();
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
+      latest: { url: 'https://blob.test/state-15.json', pathname: 'families/family-main/state-15.json' },
+      snapshot: converged,
+      allBlobs: [],
+    });
+
+    await act(async () => {
+      await result.current.triggerSync({ isManual: false });
+    });
+    expect(uploadSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('queues concurrent triggerSync and preserves mutations made during upload', async () => {
+    localStorage.clear();
+    store = new ScheduleStore();
+    store.sendFamilyPraise({ hearts: 35, sticker: 'heart', message: '테스트' });
+    let resolveFirstFetch: (v: { latest: null; snapshot: null; allBlobs: [] }) => void = () => {};
+    let fetchCount = 0;
+    vi.spyOn(syncService, 'fetchLatestSnapshot').mockImplementation(() => {
+      fetchCount += 1;
+      if (fetchCount === 1) {
+        return new Promise((resolve) => {
+          resolveFirstFetch = resolve;
+        });
+      }
+      return Promise.resolve({ latest: null, snapshot: null, allBlobs: [] });
+    });
+
+    let uploadCall = 0;
+    const uploadSpy = vi.spyOn(syncService, 'uploadSnapshot').mockImplementation(async () => {
+      uploadCall += 1;
+      if (uploadCall === 1) {
+        // Mutate store while first upload is in flight
+        store.redeemReward('비행 중 차감', 10);
+      }
+      return {
+        url: `https://blob.test/state-${uploadCall}.json`,
+        pathname: `families/family-main/state-${uploadCall}.json`,
+      };
+    });
+
+    const { result } = renderHook(() =>
+      useCloudSync({ store, syncService, pollingIntervalMs: 0, syncOnMount: false })
+    );
+
+    let firstPromise: Promise<void>;
+    let queuedPromise: Promise<void>;
+    act(() => {
+      firstPromise = result.current.triggerSync({ isManual: false });
+      queuedPromise = result.current.triggerSync({ isManual: false, forceUpload: true });
+    });
+
+    await act(async () => {
+      resolveFirstFetch({ latest: null, snapshot: null, allBlobs: [] });
+      await Promise.all([firstPromise!, queuedPromise!]);
+    });
+
+    // Must have uploaded the queued + in-flight mutation!
+    expect(uploadSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const lastUploaded = uploadSpy.mock.calls[uploadSpy.mock.calls.length - 1][0];
+    expect(lastUploaded.rewardRedemptions).toHaveLength(1);
+  });
 });

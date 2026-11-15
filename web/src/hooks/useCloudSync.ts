@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
+import { areSnapshotsSyncEquivalent } from '../domain/snapshotMerge';
 import { VercelBlobSyncService } from '../services/vercelBlobSync';
 import { SyncStatus } from '../components/SyncToast';
 
@@ -16,6 +17,11 @@ export interface UseCloudSyncOptions {
   onSyncRequest?: () => void;
 }
 
+interface TriggerSyncOptions {
+  isManual?: boolean;
+  forceUpload?: boolean;
+}
+
 export function useCloudSync({
   store = globalScheduleStore,
   syncService = VercelBlobSyncService.shared(),
@@ -28,8 +34,11 @@ export function useCloudSync({
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
 
   const isSyncingRef = useRef(false);
+  const activeSyncPromiseRef = useRef<Promise<void> | null>(null);
+  const queuedSyncOptionsRef = useRef<TriggerSyncOptions | null>(null);
   const lastSyncedBlobPathnameRef = useRef<string | null>(null);
   const isDirtyRef = useRef(false);
+  const mutationVersionRef = useRef(0);
   const isApplyingRemoteRef = useRef(false);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -54,13 +63,8 @@ export function useCloudSync({
     }, delayMs);
   }, []);
 
-  const triggerSync = useCallback(
-    async (options: { isManual?: boolean; forceUpload?: boolean } = {}) => {
-      if (isSyncingRef.current) {
-        return;
-      }
-
-      isSyncingRef.current = true;
+  const runSingleSyncCycle = useCallback(
+    async (options: TriggerSyncOptions) => {
       let announcedSlowSync = options.isManual === true;
       const showSyncingToast = () => {
         if (toastTimeoutRef.current) {
@@ -111,6 +115,7 @@ export function useCloudSync({
         }
 
         let eventToastMessage: string | null = null;
+        let hasLocalDivergence = false;
 
         // 2. Merge the proxy snapshot when a newer remote pathname arrives
         if (latest && snapshot && latest.pathname !== lastSyncedBlobPathnameRef.current) {
@@ -130,6 +135,7 @@ export function useCloudSync({
           }
 
           lastSyncedBlobPathnameRef.current = latest.pathname;
+          hasLocalDivergence = !areSnapshotsSyncEquivalent(store.makeCurrentSnapshot(), remote);
 
           // Detect incoming remote events if updated by another device
           if (remote.updatedByDeviceId && remote.updatedByDeviceId !== deviceId) {
@@ -147,14 +153,16 @@ export function useCloudSync({
           }
         }
 
-        // 3. Upload merged current snapshot if dirty, forceUpload, or no remote snapshot yet
+        // 3. Upload merged current snapshot if dirty, divergent, forceUpload, or no remote snapshot yet
         const shouldUpload =
           isDirtyRef.current ||
+          hasLocalDivergence ||
           options.forceUpload ||
           !latest ||
           options.isManual;
 
         if (shouldUpload) {
+          const uploadVersion = mutationVersionRef.current;
           const currentSnapshot = store.makeCurrentSnapshot();
           const putResult = await syncService.uploadSnapshot(currentSnapshot, {
             familyCode,
@@ -163,7 +171,15 @@ export function useCloudSync({
           });
 
           lastSyncedBlobPathnameRef.current = putResult.pathname;
-          isDirtyRef.current = false;
+          if (mutationVersionRef.current === uploadVersion) {
+            isDirtyRef.current = false;
+          } else {
+            // Another local mutation occurred while upload was in flight; ensure it gets pushed too
+            queuedSyncOptionsRef.current = {
+              isManual: queuedSyncOptionsRef.current?.isManual || false,
+              forceUpload: true,
+            };
+          }
         }
 
         setLastSyncedAt(new Date());
@@ -187,16 +203,48 @@ export function useCloudSync({
         scheduleToastDismiss(4500);
       } finally {
         clearTimeout(slowNoticeTimer);
-        isSyncingRef.current = false;
       }
     },
     [store, syncService, scheduleToastDismiss]
+  );
+
+  const triggerSync = useCallback(
+    (options: TriggerSyncOptions = {}): Promise<void> => {
+      const existing = queuedSyncOptionsRef.current;
+      queuedSyncOptionsRef.current = {
+        isManual: Boolean(existing?.isManual || options.isManual),
+        forceUpload: Boolean(existing?.forceUpload || options.forceUpload),
+      };
+
+      if (activeSyncPromiseRef.current) {
+        return activeSyncPromiseRef.current;
+      }
+
+      const promise = (async () => {
+        isSyncingRef.current = true;
+        try {
+          while (queuedSyncOptionsRef.current) {
+            const nextOptions = queuedSyncOptionsRef.current;
+            queuedSyncOptionsRef.current = null;
+            await runSingleSyncCycle(nextOptions);
+          }
+        } finally {
+          isSyncingRef.current = false;
+          activeSyncPromiseRef.current = null;
+        }
+      })();
+
+      activeSyncPromiseRef.current = promise;
+      return promise;
+    },
+    [runSingleSyncCycle]
   );
 
   // Debounced auto-upload on local store mutations
   useEffect(() => {
     const unsubscribe = store.subscribe(() => {
       if (isApplyingRemoteRef.current) return;
+      mutationVersionRef.current += 1;
       isDirtyRef.current = true;
 
       if (debounceTimerRef.current) {

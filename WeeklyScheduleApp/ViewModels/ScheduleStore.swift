@@ -170,15 +170,31 @@ final class ScheduleStore: ObservableObject {
     private var revokedStarTransactionIds: [String] = []
     private var revokedStarRedemptionIds: [String] = []
     private var revokedPraiseNoteIds: [String] = []
+    private var revokedRewardRedemptionIds: [String] = []
     private let revokedStarTransactionsStorageKey = "weekly_schedule_revoked_star_transactions_v1"
     private let revokedStarRedemptionsStorageKey = "weekly_schedule_revoked_star_redemptions_v1"
     private let revokedPraiseNotesStorageKey = "weekly_schedule_revoked_praise_notes_v1"
+    private let revokedRewardRedemptionsStorageKey = "weekly_schedule_revoked_reward_redemptions_v1"
+    private let pendingCloudPushStorageKey = "weekly_schedule_pending_cloud_push_v1"
     private let syncFlagsStorageKey = "weekly_schedule_sync_flags_v1"
     private let vercelTokenStorageKey = "weekly_schedule_vercel_blob_token_v1"
     private let familyCodeStorageKey = "weekly_schedule_family_code_v1"
 
+    private let userDefaults: UserDefaults
+    private let syncTransport: CloudSyncTransport
+    private let enableSystemSideEffects: Bool
     private let deviceId: String
     private var lastSyncedBlobPathname: String? = nil
+    private var hasPendingCloudPush: Bool = false
+    private var localMutationVersion: UInt64 = 0
+    private struct QueuedSyncRequest {
+        var push: Bool
+        var forceDownload: Bool
+        var forceUploadIfEmpty: Bool
+        var isInitialLaunch: Bool
+    }
+    private var activeSyncTask: Task<Void, Never>? = nil
+    private var pendingSyncRequest: QueuedSyncRequest? = nil
     private var lastObservedWeekPrefix: String = ""
     private var lastObservedDay: Date = Calendar.current.startOfDay(for: Date())
     private var dayChangedObserver: NSObjectProtocol?
@@ -188,12 +204,21 @@ final class ScheduleStore: ObservableObject {
     private var pushDebounceTask: Task<Void, Never>?
     private var toastDismissTask: Task<Void, Never>?
 
-    init() {
-        if let savedId = UserDefaults.standard.string(forKey: deviceIdStorageKey), !savedId.isEmpty {
+    init(
+        userDefaults: UserDefaults = .standard,
+        syncTransport: CloudSyncTransport = VercelBlobSyncService.shared,
+        enableSystemSideEffects: Bool = true,
+        autoStartBackgroundTasks: Bool = true
+    ) {
+        self.userDefaults = userDefaults
+        self.syncTransport = syncTransport
+        self.enableSystemSideEffects = enableSystemSideEffects
+
+        if let savedId = userDefaults.string(forKey: deviceIdStorageKey), !savedId.isEmpty {
             self.deviceId = savedId
         } else {
             let newId = String(UUID().uuidString.prefix(6)).lowercased()
-            UserDefaults.standard.set(newId, forKey: deviceIdStorageKey)
+            userDefaults.set(newId, forKey: deviceIdStorageKey)
             self.deviceId = newId
         }
 
@@ -206,9 +231,13 @@ final class ScheduleStore: ObservableObject {
         loadReactionsAndPraises()
         loadStarData()
         loadSyncFlags()
+        filterRevokedNotesAndRedemptions()
+        hasPendingCloudPush = userDefaults.bool(forKey: pendingCloudPushStorageKey)
         reconcileFlagsWithSets()
         normalizeAndDeduplicateLocalItems()
-        absorbWidgetPendingCompletions(triggerCloudPush: false)
+        if enableSystemSideEffects {
+            absorbWidgetPendingCompletions(triggerCloudPush: false)
+        }
         isRestoringLocalState = false
         syncWidgetState()
 
@@ -217,17 +246,21 @@ final class ScheduleStore: ObservableObject {
         selectedWeekday = Weekday.from(date: currentDate)
         lastObservedDay = Calendar.current.startOfDay(for: currentDate)
         lastObservedWeekPrefix = currentWeekPrefix
-        startTimers()
-        setupDateChangeObserver()
+        if autoStartBackgroundTasks {
+            startTimers()
+            setupDateChangeObserver()
 
-        Task {
-            await NotificationManager.shared.updateDeviceRole(deviceRole)
-            if deviceRole == .child {
-                await syncNotificationsAsync()
-            } else {
-                await NotificationManager.shared.disableAllNotificationsForParent()
+            Task {
+                if enableSystemSideEffects {
+                    await NotificationManager.shared.updateDeviceRole(deviceRole)
+                    if deviceRole == .child {
+                        await syncNotificationsAsync()
+                    } else {
+                        await NotificationManager.shared.disableAllNotificationsForParent()
+                    }
+                }
+                await pullLatestFromCloud(isInitialLaunch: true)
             }
-            await pullLatestFromCloud(isInitialLaunch: true)
         }
     }
 
@@ -282,7 +315,7 @@ final class ScheduleStore: ObservableObject {
                 self.refreshDateAndDayChange()
                 self.checkParentModeExpiration()
                 self.checkPinLockoutExpiration()
-                if self.deviceRole == .child {
+                if self.enableSystemSideEffects && self.deviceRole == .child {
                     NotificationManager.shared.checkLiveScheduleAlarms(now: self.now, items: self.effectiveItems)
                 }
             }
@@ -317,9 +350,11 @@ final class ScheduleStore: ObservableObject {
     func setDeviceRole(_ role: DeviceRole) {
         deviceRole = role
         hasConfirmedDeviceRole = true
-        UserDefaults.standard.set(role.rawValue, forKey: deviceRoleStorageKey)
-        UserDefaults.standard.set(true, forKey: deviceRoleConfirmedKey)
-        KeychainHelper.saveString(role.rawValue, forKey: deviceRoleStorageKey)
+        userDefaults.set(role.rawValue, forKey: deviceRoleStorageKey)
+        userDefaults.set(true, forKey: deviceRoleConfirmedKey)
+        if enableSystemSideEffects {
+            KeychainHelper.saveString(role.rawValue, forKey: deviceRoleStorageKey)
+        }
 
         if role == .child {
             lockParentMode()
@@ -329,13 +364,15 @@ final class ScheduleStore: ObservableObject {
         syncWidgetState()
 
         Task {
-            await NotificationManager.shared.updateDeviceRole(role)
-            if role == .child {
-                await NotificationManager.shared.syncAllNotifications(for: masterItems)
-                showToast("👦 아이 폰 모드로 전환되었습니다. 시간표 알람이 활성화됩니다.")
-            } else {
-                await NotificationManager.shared.disableAllNotificationsForParent()
-                showToast("👩‍👦 부모님 폰 모드로 전환되었습니다. 알림이 발생하지 않습니다.")
+            if enableSystemSideEffects {
+                await NotificationManager.shared.updateDeviceRole(role)
+                if role == .child {
+                    await NotificationManager.shared.syncAllNotifications(for: masterItems)
+                    showToast("👦 아이 폰 모드로 전환되었습니다. 시간표 알람이 활성화됩니다.")
+                } else {
+                    await NotificationManager.shared.disableAllNotificationsForParent()
+                    showToast("👩‍👦 부모님 폰 모드로 전환되었습니다. 알림이 발생하지 않습니다.")
+                }
             }
         }
     }
@@ -346,10 +383,12 @@ final class ScheduleStore: ObservableObject {
         let ts = Date().timeIntervalSince1970
         parentPinCode = digitsOnly
         parentPinUpdatedAt = ts
-        UserDefaults.standard.set(digitsOnly, forKey: parentPinStorageKey)
-        UserDefaults.standard.set(ts, forKey: parentPinUpdatedAtKey)
-        KeychainHelper.saveString(digitsOnly, forKey: parentPinStorageKey)
-        KeychainHelper.saveString(String(ts), forKey: parentPinUpdatedAtKey)
+        userDefaults.set(digitsOnly, forKey: parentPinStorageKey)
+        userDefaults.set(ts, forKey: parentPinUpdatedAtKey)
+        if enableSystemSideEffects {
+            KeychainHelper.saveString(digitsOnly, forKey: parentPinStorageKey)
+            KeychainHelper.saveString(String(ts), forKey: parentPinUpdatedAtKey)
+        }
 
         resetPinLockout()
         unlockParentMode()
@@ -371,28 +410,36 @@ final class ScheduleStore: ObservableObject {
 
     private func recordFailedPinAttempt() {
         failedPinAttempts += 1
-        KeychainHelper.saveString("\(failedPinAttempts)", forKey: "pin_failed_attempts")
+        if enableSystemSideEffects {
+            KeychainHelper.saveString("\(failedPinAttempts)", forKey: "pin_failed_attempts")
+        }
 
         // 5회 이상 실패 시 단계별 입력 잠금 (5회: 60초, 10회 이상: 300초)
         if failedPinAttempts >= 5 && failedPinAttempts % 5 == 0 {
             let lockSeconds: TimeInterval = failedPinAttempts >= 10 ? 300 : 60
             let until = Date().addingTimeInterval(lockSeconds)
             pinLockoutUntil = until
-            KeychainHelper.saveString(String(until.timeIntervalSince1970), forKey: "pin_lockout_until")
+            if enableSystemSideEffects {
+                KeychainHelper.saveString(String(until.timeIntervalSince1970), forKey: "pin_lockout_until")
+            }
         }
     }
 
     private func resetPinLockout() {
         failedPinAttempts = 0
         pinLockoutUntil = nil
-        KeychainHelper.saveString("0", forKey: "pin_failed_attempts")
-        KeychainHelper.saveString("0", forKey: "pin_lockout_until")
+        if enableSystemSideEffects {
+            KeychainHelper.saveString("0", forKey: "pin_failed_attempts")
+            KeychainHelper.saveString("0", forKey: "pin_lockout_until")
+        }
     }
 
     private func checkPinLockoutExpiration() {
         if let until = pinLockoutUntil, now >= until {
             pinLockoutUntil = nil
-            KeychainHelper.saveString("0", forKey: "pin_lockout_until")
+            if enableSystemSideEffects {
+                KeychainHelper.saveString("0", forKey: "pin_lockout_until")
+            }
         }
     }
 
@@ -1081,9 +1128,6 @@ final class ScheduleStore: ObservableObject {
             redeemedByRole: deviceRole.shortBadgeTitle
         )
         rewardRedemptions.insert(redemption, at: 0)
-        if rewardRedemptions.count > 50 {
-            rewardRedemptions = Array(rewardRedemptions.prefix(50))
-        }
 
         if isParentModeUnlocked {
             unlockParentMode()
@@ -1097,6 +1141,11 @@ final class ScheduleStore: ObservableObject {
     func cancelRedemption(_ redemption: HeartRewardRedemption) {
         guard let index = rewardRedemptions.firstIndex(where: { $0.id == redemption.id }) else { return }
         let removed = rewardRedemptions.remove(at: index)
+        let canonicalId = removed.id.uuidString.uppercased()
+        if !revokedRewardRedemptionIds.contains(where: { $0.caseInsensitiveCompare(canonicalId) == .orderedSame }) {
+            revokedRewardRedemptionIds.append(canonicalId)
+        }
+        saveStarData()
         if isParentModeUnlocked {
             unlockParentMode()
         }
@@ -1654,11 +1703,11 @@ final class ScheduleStore: ObservableObject {
         // 원격 최신 스냅샷에 남아있을 수 있는 고아 트랜잭션 ID들도 모두 수집 (아이 폰 잔류 스타 방지)
         let cleanToken = vercelBlobToken.trimmingCharacters(in: .whitespacesAndNewlines)
         if !cleanToken.isEmpty {
-            if let (latest, _) = try? await VercelBlobSyncService.shared.fetchLatestBlobMetadata(
+            if let (latest, _) = try? await syncTransport.fetchLatestBlobMetadata(
                 token: cleanToken,
                 familyCode: familyCode
             ), let latestBlob = latest {
-                if let remoteSnapshot = try? await VercelBlobSyncService.shared.downloadSnapshot(
+                if let remoteSnapshot = try? await syncTransport.downloadSnapshot(
                     from: latestBlob.url,
                     token: cleanToken
                 ) {
@@ -2077,7 +2126,13 @@ final class ScheduleStore: ObservableObject {
         scheduleCloudPush()
     }
 
+    private func sendInstantSyncNotificationIfEnabled(title: String, body: String) async {
+        guard enableSystemSideEffects else { return }
+        await NotificationManager.shared.sendInstantSyncEventNotification(title: title, body: body)
+    }
+
     func syncNotificationsAsync() async {
+        guard enableSystemSideEffects else { return }
         guard deviceRole == .child else {
             await NotificationManager.shared.disableAllNotificationsForParent()
             return
@@ -2099,8 +2154,8 @@ final class ScheduleStore: ObservableObject {
         let cleanFamily = familyCode.trimmingCharacters(in: .whitespacesAndNewlines)
         self.vercelBlobToken = cleanToken.isEmpty ? VercelBlobSyncService.defaultToken : cleanToken
         self.familyCode = cleanFamily.isEmpty ? VercelBlobSyncService.defaultFamilyCode : cleanFamily
-        UserDefaults.standard.set(self.vercelBlobToken, forKey: vercelTokenStorageKey)
-        UserDefaults.standard.set(self.familyCode, forKey: familyCodeStorageKey)
+        userDefaults.set(self.vercelBlobToken, forKey: vercelTokenStorageKey)
+        userDefaults.set(self.familyCode, forKey: familyCodeStorageKey)
         lastSyncedBlobPathname = nil
         syncWidgetState()
 
@@ -2109,89 +2164,204 @@ final class ScheduleStore: ObservableObject {
         }
     }
 
+    private func setPendingCloudPush(_ pending: Bool) {
+        hasPendingCloudPush = pending
+        userDefaults.set(pending, forKey: pendingCloudPushStorageKey)
+    }
+
+    private func markCloudPushPending() {
+        localMutationVersion &+= 1
+        setPendingCloudPush(true)
+    }
+
     func scheduleCloudPush() {
         guard isCloudSyncEnabled else { return }
+        markCloudPushPending()
         pushDebounceTask?.cancel()
         pushDebounceTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 350_000_000) // 0.35초 디바운스
             guard !Task.isCancelled, let self else { return }
-            await self.pushMergedStateToCloud()
+            self.pushDebounceTask = nil
+            await self.performSerializedSync(
+                push: true,
+                forceDownload: false,
+                forceUploadIfEmpty: false,
+                isInitialLaunch: false
+            )
         }
     }
 
     /// 스타 지급, 보상 승인 등 즉각적 원격 전파가 필요한 중요 트랜잭션용 즉시 푸시
     func pushImmediateToCloud() async {
         guard isCloudSyncEnabled else { return }
+        markCloudPushPending()
         pushDebounceTask?.cancel()
         pushDebounceTask = nil
-        await pushMergedStateToCloud()
+        await performSerializedSync(
+            push: true,
+            forceDownload: false,
+            forceUploadIfEmpty: false,
+            isInitialLaunch: false
+        )
     }
 
     /// 백그라운드 전환 등 앱 중단 직전 대기 중인 푸시 작업을 즉시 flush
     func flushPendingPush() async {
-        guard isCloudSyncEnabled, pushDebounceTask != nil else { return }
+        guard isCloudSyncEnabled else { return }
+        guard pushDebounceTask != nil || hasPendingCloudPush else { return }
         pushDebounceTask?.cancel()
         pushDebounceTask = nil
-        await pushMergedStateToCloud()
+        await performSerializedSync(
+            push: true,
+            forceDownload: false,
+            forceUploadIfEmpty: false,
+            isInitialLaunch: false
+        )
     }
 
     /// 수동 새로고침 / 즉시 동기화
     func syncNow(forceUploadIfEmpty: Bool = true) async {
         guard isCloudSyncEnabled else { return }
-        await pullLatestFromCloud(isInitialLaunch: forceUploadIfEmpty, forceDownload: true)
+        await performSerializedSync(
+            push: hasPendingCloudPush,
+            forceDownload: true,
+            forceUploadIfEmpty: forceUploadIfEmpty,
+            isInitialLaunch: forceUploadIfEmpty
+        )
     }
 
     private func pullLatestFromCloud(isInitialLaunch: Bool, forceDownload: Bool = false) async {
         guard !vercelBlobToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        if isSyncing && !forceDownload { return }
-        isSyncing = true
-        syncErrorMessage = nil
-        defer { isSyncing = false }
+        await performSerializedSync(
+            push: hasPendingCloudPush,
+            forceDownload: forceDownload,
+            forceUploadIfEmpty: isInitialLaunch,
+            isInitialLaunch: isInitialLaunch
+        )
+    }
 
+    private func performSerializedSync(
+        push: Bool,
+        forceDownload: Bool,
+        forceUploadIfEmpty: Bool,
+        isInitialLaunch: Bool
+    ) async {
+        guard !vercelBlobToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+
+        if let existing = pendingSyncRequest {
+            pendingSyncRequest = QueuedSyncRequest(
+                push: existing.push || push,
+                forceDownload: existing.forceDownload || forceDownload,
+                forceUploadIfEmpty: existing.forceUploadIfEmpty || forceUploadIfEmpty,
+                isInitialLaunch: existing.isInitialLaunch && isInitialLaunch
+            )
+        } else {
+            pendingSyncRequest = QueuedSyncRequest(
+                push: push,
+                forceDownload: forceDownload,
+                forceUploadIfEmpty: forceUploadIfEmpty,
+                isInitialLaunch: isInitialLaunch
+            )
+        }
+
+        if let runningTask = activeSyncTask {
+            await runningTask.value
+            return
+        }
+
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.isSyncing = true
+            self.syncErrorMessage = nil
+            defer {
+                self.isSyncing = false
+                self.activeSyncTask = nil
+            }
+
+            while let request = self.pendingSyncRequest {
+                self.pendingSyncRequest = nil
+                await self.executeSyncCycle(request)
+            }
+        }
+        activeSyncTask = task
+        await task.value
+    }
+
+    private func executeSyncCycle(_ request: QueuedSyncRequest) async {
         do {
-            let (latest, _) = try await VercelBlobSyncService.shared.fetchLatestBlobMetadata(
+            let (latest, allBlobs) = try await syncTransport.fetchLatestBlobMetadata(
                 token: vercelBlobToken,
                 familyCode: familyCode
             )
 
             guard let latestBlob = latest else {
-                // 클라우드에 아직 가족 스냅샷이 하나도 없으면 현재 기기 데이터를 최초 업로드
-                if isInitialLaunch {
-                    await pushMergedStateToCloud()
+                // 클라우드에 아직 가족 스냅샷이 하나도 없으면 필요 시 현재 기기 데이터를 최초 업로드
+                if request.push || hasPendingCloudPush || request.forceUploadIfEmpty || request.isInitialLaunch {
+                    let uploadVersion = localMutationVersion
+                    let snapshot = makeCurrentSnapshot()
+                    let putResult = try await syncTransport.uploadSnapshot(
+                        snapshot,
+                        token: vercelBlobToken,
+                        familyCode: familyCode,
+                        shortDeviceId: deviceId,
+                        previousBlobsToDelete: allBlobs
+                    )
+                    lastSyncedBlobPathname = putResult.pathname
+                    lastSyncedAt = Date()
+                    lastRemoteUpdatedBy = snapshot.updatedByRole
+                    if localMutationVersion == uploadVersion {
+                        setPendingCloudPush(false)
+                    }
+                    if enableSystemSideEffects {
+                        ScheduleWidgetDataManager.shared.cacheRemoteSnapshot(snapshot)
+                    }
                 }
                 return
             }
 
-            if !forceDownload, latestBlob.pathname == lastSyncedBlobPathname {
-                // 이미 최신 스냅샷과 동일한 상태
+            let needsDownload = request.forceDownload
+                || latestBlob.pathname != lastSyncedBlobPathname
+                || lastSyncedBlobPathname == nil
+            var needsUpload = request.push || hasPendingCloudPush
+
+            if !needsDownload && !needsUpload {
                 if lastSyncedAt == nil {
                     lastSyncedAt = Date()
                 }
                 return
             }
 
-            let remoteSnapshot = try await VercelBlobSyncService.shared.downloadSnapshot(
-                from: latestBlob.url,
-                token: vercelBlobToken
-            )
-            let prevHearts = availableHearts
-            let prevSpent = totalSpentHearts
-            let prevEarnedStars = totalEarnedStars
-            let prevSpentStars = totalSpentStars
-            let prevPendingRequests = pendingStarRedemptionCount
-            let prevVerifiedCount = parentVerifiedItemKeys.count
-            let prevCompletedCount = completedItemKeys.count
-            let prevItems = self.items
-            let prevOverrides = self.weeklyOverrides
+            if needsDownload {
+                let remoteSnapshot = try await syncTransport.downloadSnapshot(
+                    from: latestBlob.url,
+                    token: vercelBlobToken
+                )
+                let prevHearts = availableHearts
+                let prevSpent = totalSpentHearts
+                let prevEarnedStars = totalEarnedStars
+                let prevSpentStars = totalSpentStars
+                let prevPendingRequests = pendingStarRedemptionCount
+                let prevVerifiedCount = parentVerifiedItemKeys.count
+                let prevCompletedCount = completedItemKeys.count
+                let prevItems = self.items
+                let prevOverrides = self.weeklyOverrides
 
-            await applyMergedRemoteSnapshot(remoteSnapshot)
-            lastSyncedBlobPathname = latestBlob.pathname
-            lastSyncedAt = Date()
-            lastRemoteUpdatedBy = remoteSnapshot.updatedByRole
-            ScheduleWidgetDataManager.shared.cacheRemoteSnapshot(remoteSnapshot)
+                await applyMergedRemoteSnapshot(remoteSnapshot)
+                lastSyncedBlobPathname = latestBlob.pathname
+                lastSyncedAt = Date()
+                lastRemoteUpdatedBy = remoteSnapshot.updatedByRole
+                if enableSystemSideEffects {
+                    ScheduleWidgetDataManager.shared.cacheRemoteSnapshot(remoteSnapshot)
+                }
 
-            // 다른 기기에서 보낸 새로운 이벤트가 있으면 반가운 토스트 & 로컬 알림 표시
-            if !isInitialLaunch && remoteSnapshot.updatedByDeviceId != deviceId {
+                // 병합된 로컬 상태에 아직 원격 스냅샷에 반영되지 않은 변경이 있으면 즉시 업로드 예약
+                let mergedLocal = makeCurrentSnapshot()
+                if !Self.snapshotsHaveEquivalentSyncState(mergedLocal, remoteSnapshot) {
+                    needsUpload = true
+                }
+
+                // 다른 기기에서 보낸 새로운 이벤트가 있으면 반가운 토스트 & 로컬 알림 표시
+                if !request.isInitialLaunch && remoteSnapshot.updatedByDeviceId != deviceId {
                 let newHearts = totalHeartsThisWeek
                 let newEarnedStars = totalEarnedStars
                 let newSpentStars = totalSpentStars
@@ -2208,14 +2378,14 @@ final class ScheduleStore: ObservableObject {
                         ? "🎉 주간 올클리어 보너스 포함 스타 +\(diff)개가 도착했어요! (보유 \(availableStars)⭐)"
                         : "⭐ 부모님이 오늘의 퀘스트 올클리어 스타 +\(diff)개를 수여해주셨어요!"
                     showToast(msg)
-                    await NotificationManager.shared.sendInstantSyncEventNotification(
+                    await sendInstantSyncNotificationIfEnabled(
                         title: isBonusIncluded ? "👑 주간 평일 올클리어 보너스 획득!" : "⭐ 오늘의 스타 +1개 획득!",
                         body: msg
                     )
                 } else if newSpentStars > prevSpentStars, let latestApproved = starRedemptionRequests.first(where: { $0.status == .approved }) {
                     let msg = "🌟 [\(latestApproved.rewardTitle)] 스타 보상 교환이 승인되었어요!"
                     showToast(msg)
-                    await NotificationManager.shared.sendInstantSyncEventNotification(
+                    await sendInstantSyncNotificationIfEnabled(
                         title: "🌟 스타 보상 교환 승인 완료!",
                         body: "[\(latestApproved.rewardTitle)] (스타 \(latestApproved.starCost)개 사용)"
                     )
@@ -2223,7 +2393,7 @@ final class ScheduleStore: ObservableObject {
                           let latestPending = starRedemptionRequests.first(where: { $0.status == .pending }) {
                     let msg = "👦 아이가 [\(latestPending.rewardTitle)] (⭐\(latestPending.starCost)개) 교환을 신청했어요!"
                     showToast(msg)
-                    await NotificationManager.shared.sendInstantSyncEventNotification(
+                    await sendInstantSyncNotificationIfEnabled(
                         title: "🌟 아이의 스타 보상 교환 신청!",
                         body: msg
                     )
@@ -2231,7 +2401,7 @@ final class ScheduleStore: ObservableObject {
                     let diff = newSpent - prevSpent
                     let msg = "🎁 [\(latest.title)] 보상 교환으로 하트 \(diff)개가 사용되었어요!"
                     showToast(msg)
-                    await NotificationManager.shared.sendInstantSyncEventNotification(
+                    await sendInstantSyncNotificationIfEnabled(
                         title: "🎁 보상 교환 완료!",
                         body: "[\(latest.title)] (하트 \(diff)개 차감)"
                     )
@@ -2239,7 +2409,7 @@ final class ScheduleStore: ObservableObject {
                     let diff = newHearts - prevHearts
                     let msg = "❤️ 부모님이 하트 +\(diff)개와 응원을 보내주셨어요!"
                     showToast(msg)
-                    await NotificationManager.shared.sendInstantSyncEventNotification(
+                    await sendInstantSyncNotificationIfEnabled(
                         title: "❤️ 부모님의 하트가 도착했어요!",
                         body: latestPraiseNote?.message ?? "오늘 스케줄을 확인해 보세요!"
                     )
@@ -2247,7 +2417,7 @@ final class ScheduleStore: ObservableObject {
                     let diff = newVerifiedCount - prevVerifiedCount
                     let msg = "✅ 부모님이 숙제 \(diff)개에 확인 도장을 찍어주셨어요!"
                     showToast(msg)
-                    await NotificationManager.shared.sendInstantSyncEventNotification(
+                    await sendInstantSyncNotificationIfEnabled(
                         title: "✅ 부모님 숙제 확인 완료!",
                         body: "부모님이 숙제 \(diff)개를 확인하고 도장을 찍어주셨어요."
                     )
@@ -2259,46 +2429,28 @@ final class ScheduleStore: ObservableObject {
                     showToast("📅 \(remoteSnapshot.updatedByRole)에서 변경한 스케줄이 동기화되었어요!")
                 }
             }
-        } catch {
-            syncErrorMessage = error.localizedDescription
-        }
-    }
-
-    private func pushMergedStateToCloud() async {
-        guard !vercelBlobToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        isSyncing = true
-        syncErrorMessage = nil
-        defer { isSyncing = false }
-
-        do {
-            // 1. 업로드 직전 원격 최신 상태를 먼저 조회해 충돌 없이 병합
-            let (latest, allBlobs) = try await VercelBlobSyncService.shared.fetchLatestBlobMetadata(
-                token: vercelBlobToken,
-                familyCode: familyCode
-            )
-
-            if let latestBlob = latest, latestBlob.pathname != lastSyncedBlobPathname {
-                let remoteSnapshot = try await VercelBlobSyncService.shared.downloadSnapshot(
-                    from: latestBlob.url,
-                    token: vercelBlobToken
-                )
-                await applyMergedRemoteSnapshot(remoteSnapshot)
             }
 
-            // 2. 병합 완료된 최신 스냅샷 생성 및 업로드
-            let snapshot = makeCurrentSnapshot()
-            let putResult = try await VercelBlobSyncService.shared.uploadSnapshot(
-                snapshot,
-                token: vercelBlobToken,
-                familyCode: familyCode,
-                shortDeviceId: deviceId,
-                previousBlobsToDelete: allBlobs
-            )
-
-            lastSyncedBlobPathname = putResult.pathname
-            lastSyncedAt = Date()
-            lastRemoteUpdatedBy = snapshot.updatedByRole
-            ScheduleWidgetDataManager.shared.cacheRemoteSnapshot(snapshot)
+            if needsUpload {
+                let uploadVersion = localMutationVersion
+                let snapshot = makeCurrentSnapshot()
+                let putResult = try await syncTransport.uploadSnapshot(
+                    snapshot,
+                    token: vercelBlobToken,
+                    familyCode: familyCode,
+                    shortDeviceId: deviceId,
+                    previousBlobsToDelete: allBlobs
+                )
+                lastSyncedBlobPathname = putResult.pathname
+                lastSyncedAt = Date()
+                lastRemoteUpdatedBy = snapshot.updatedByRole
+                if localMutationVersion == uploadVersion {
+                    setPendingCloudPush(false)
+                }
+                if enableSystemSideEffects {
+                    ScheduleWidgetDataManager.shared.cacheRemoteSnapshot(snapshot)
+                }
+            }
         } catch {
             syncErrorMessage = error.localizedDescription
         }
@@ -2332,8 +2484,73 @@ final class ScheduleStore: ObservableObject {
             deletedStarPresetTimestamps: deletedStarPresetTimestamps,
             revokedStarTransactionIds: revokedStarTransactionIds,
             revokedStarRedemptionIds: revokedStarRedemptionIds,
-            revokedPraiseNoteIds: revokedPraiseNoteIds
+            revokedPraiseNoteIds: revokedPraiseNoteIds,
+            revokedRewardRedemptionIds: revokedRewardRedemptionIds
         )
+    }
+
+    static func snapshotsHaveEquivalentSyncState(_ lhs: CloudSyncSnapshot, _ rhs: CloudSyncSnapshot) -> Bool {
+        guard lhs.parentPinCode == rhs.parentPinCode,
+              lhs.parentPinUpdatedAt == rhs.parentPinUpdatedAt,
+              lhs.archivedEarnedHearts == rhs.archivedEarnedHearts,
+              lhs.deletedItemTimestamps == rhs.deletedItemTimestamps,
+              lhs.weeklyOverrides == rhs.weeklyOverrides,
+              lhs.completionFlags == rhs.completionFlags,
+              lhs.subTaskCompletionFlags == rhs.subTaskCompletionFlags,
+              lhs.parentVerifiedFlags == rhs.parentVerifiedFlags,
+              lhs.parentVerifiedSubTaskFlags == rhs.parentVerifiedSubTaskFlags,
+              lhs.itemReactions == rhs.itemReactions,
+              lhs.deletedRewardPresetTimestamps == rhs.deletedRewardPresetTimestamps,
+              lhs.deletedStarPresetTimestamps == rhs.deletedStarPresetTimestamps
+        else {
+            return false
+        }
+
+        let lhsItems = lhs.items.sorted { $0.id.uuidString < $1.id.uuidString }
+        let rhsItems = rhs.items.sorted { $0.id.uuidString < $1.id.uuidString }
+        guard lhsItems == rhsItems else { return false }
+
+        let lhsNotes = lhs.praiseNotes.sorted {
+            $0.createdAt == $1.createdAt ? ($0.id.uuidString < $1.id.uuidString) : ($0.createdAt > $1.createdAt)
+        }
+        let rhsNotes = rhs.praiseNotes.sorted {
+            $0.createdAt == $1.createdAt ? ($0.id.uuidString < $1.id.uuidString) : ($0.createdAt > $1.createdAt)
+        }
+        guard lhsNotes == rhsNotes else { return false }
+
+        let lhsRedemptions = lhs.rewardRedemptions.sorted {
+            $0.createdAt == $1.createdAt ? ($0.id.uuidString < $1.id.uuidString) : ($0.createdAt > $1.createdAt)
+        }
+        let rhsRedemptions = rhs.rewardRedemptions.sorted {
+            $0.createdAt == $1.createdAt ? ($0.id.uuidString < $1.id.uuidString) : ($0.createdAt > $1.createdAt)
+        }
+        guard lhsRedemptions == rhsRedemptions else { return false }
+
+        let lhsRewardPresets = lhs.rewardPresets.sorted { $0.id.uuidString < $1.id.uuidString }
+        let rhsRewardPresets = rhs.rewardPresets.sorted { $0.id.uuidString < $1.id.uuidString }
+        guard lhsRewardPresets == rhsRewardPresets else { return false }
+
+        let lhsStarTx = lhs.starTransactions.sorted { $0.id < $1.id }
+        let rhsStarTx = rhs.starTransactions.sorted { $0.id < $1.id }
+        guard lhsStarTx == rhsStarTx else { return false }
+
+        let lhsStarReq = lhs.starRedemptionRequests.sorted { $0.id.uuidString < $1.id.uuidString }
+        let rhsStarReq = rhs.starRedemptionRequests.sorted { $0.id.uuidString < $1.id.uuidString }
+        guard lhsStarReq == rhsStarReq else { return false }
+
+        let lhsStarPresets = lhs.starRewardPresets.sorted { $0.id.uuidString < $1.id.uuidString }
+        let rhsStarPresets = rhs.starRewardPresets.sorted { $0.id.uuidString < $1.id.uuidString }
+        guard lhsStarPresets == rhsStarPresets else { return false }
+
+        guard Set(lhs.revokedStarTransactionIds) == Set(rhs.revokedStarTransactionIds),
+              Set(lhs.revokedStarRedemptionIds.map { $0.uppercased() }) == Set(rhs.revokedStarRedemptionIds.map { $0.uppercased() }),
+              Set(lhs.revokedPraiseNoteIds.map { $0.uppercased() }) == Set(rhs.revokedPraiseNoteIds.map { $0.uppercased() }),
+              Set(lhs.revokedRewardRedemptionIds.map { $0.uppercased() }) == Set(rhs.revokedRewardRedemptionIds.map { $0.uppercased() })
+        else {
+            return false
+        }
+
+        return true
     }
 
     /// 원격 스냅샷과 로컬 데이터를 타임스탬프 기준으로 유실 없이 스마트 병합
@@ -2387,10 +2604,12 @@ final class ScheduleStore: ObservableObject {
         if remote.parentPinCode.count == 6 && remote.parentPinUpdatedAt > self.parentPinUpdatedAt {
             self.parentPinCode = remote.parentPinCode
             self.parentPinUpdatedAt = remote.parentPinUpdatedAt
-            UserDefaults.standard.set(remote.parentPinCode, forKey: parentPinStorageKey)
-            UserDefaults.standard.set(remote.parentPinUpdatedAt, forKey: parentPinUpdatedAtKey)
-            KeychainHelper.saveString(remote.parentPinCode, forKey: parentPinStorageKey)
-            KeychainHelper.saveString(String(remote.parentPinUpdatedAt), forKey: parentPinUpdatedAtKey)
+            userDefaults.set(remote.parentPinCode, forKey: parentPinStorageKey)
+            userDefaults.set(remote.parentPinUpdatedAt, forKey: parentPinUpdatedAtKey)
+            if enableSystemSideEffects {
+                KeychainHelper.saveString(remote.parentPinCode, forKey: parentPinStorageKey)
+                KeychainHelper.saveString(String(remote.parentPinUpdatedAt), forKey: parentPinUpdatedAtKey)
+            }
         }
 
         // 2. 삭제된 일정 기록 병합
@@ -2438,10 +2657,11 @@ final class ScheduleStore: ObservableObject {
         // 4. 플래그 딕셔너리 -> Set 반영
         refreshFlagSetsFromDictionaries()
 
-        // 4-1. 취소/원복된 ID 목록 병합
+        // 4-1. 취소/원복된 ID 목록 병합 (canonical uppercase 정규화)
         self.revokedStarTransactionIds = Array(Set(self.revokedStarTransactionIds + remote.revokedStarTransactionIds))
-        self.revokedStarRedemptionIds = Array(Set(self.revokedStarRedemptionIds + remote.revokedStarRedemptionIds))
-        self.revokedPraiseNoteIds = Array(Set(self.revokedPraiseNoteIds + remote.revokedPraiseNoteIds))
+        self.revokedStarRedemptionIds = Array(Set((self.revokedStarRedemptionIds + remote.revokedStarRedemptionIds).map { $0.uppercased() }))
+        self.revokedPraiseNoteIds = Array(Set((self.revokedPraiseNoteIds + remote.revokedPraiseNoteIds).map { $0.uppercased() }))
+        self.revokedRewardRedemptionIds = Array(Set((self.revokedRewardRedemptionIds + remote.revokedRewardRedemptionIds).map { $0.uppercased() }))
 
         // 5. 전체 응원 노트 병합 (취소된 노트 제외)
         var noteDict: [UUID: ParentPraiseNote] = [:]
@@ -2457,11 +2677,16 @@ final class ScheduleStore: ObservableObject {
             self.praiseNotes = mergedNotes
         }
 
-        // 5-1. 하트 보상 교환(차감) 내역 병합 (최신 50개 유지)
+        // 5-1. 하트 보상 교환(차감) 내역 병합 (취소된 교환 제외, 전체 원장 보존)
         var redemptionDict: [UUID: HeartRewardRedemption] = [:]
         for r in self.rewardRedemptions { redemptionDict[r.id] = r }
         for r in remote.rewardRedemptions { redemptionDict[r.id] = r }
-        let mergedRedemptions = Array(redemptionDict.values.sorted { $0.createdAt > $1.createdAt }.prefix(50))
+        for rId in self.revokedRewardRedemptionIds {
+            if let uuid = UUID(uuidString: rId) {
+                redemptionDict.removeValue(forKey: uuid)
+            }
+        }
+        let mergedRedemptions = redemptionDict.values.sorted { $0.createdAt > $1.createdAt }
         if mergedRedemptions != self.rewardRedemptions {
             self.rewardRedemptions = mergedRedemptions
         }
@@ -2809,41 +3034,49 @@ final class ScheduleStore: ObservableObject {
 
     private func loadSecurityAndRoleSettings() {
         // 1. 6자리 마스터 PIN 로드 (Keychain 우선 -> UserDefaults -> 기본값 160125)
-        if let kcPin = KeychainHelper.readString(forKey: parentPinStorageKey), kcPin.count == 6 {
+        if enableSystemSideEffects, let kcPin = KeychainHelper.readString(forKey: parentPinStorageKey), kcPin.count == 6 {
             self.parentPinCode = kcPin
-        } else if let udPin = UserDefaults.standard.string(forKey: parentPinStorageKey), udPin.count == 6 {
+        } else if let udPin = userDefaults.string(forKey: parentPinStorageKey), udPin.count == 6 {
             self.parentPinCode = udPin
-            KeychainHelper.saveString(udPin, forKey: parentPinStorageKey)
+            if enableSystemSideEffects {
+                KeychainHelper.saveString(udPin, forKey: parentPinStorageKey)
+            }
         } else {
             self.parentPinCode = Self.defaultMasterPin
-            UserDefaults.standard.set(Self.defaultMasterPin, forKey: parentPinStorageKey)
-            KeychainHelper.saveString(Self.defaultMasterPin, forKey: parentPinStorageKey)
+            userDefaults.set(Self.defaultMasterPin, forKey: parentPinStorageKey)
+            if enableSystemSideEffects {
+                KeychainHelper.saveString(Self.defaultMasterPin, forKey: parentPinStorageKey)
+            }
         }
 
-        if let kcTsStr = KeychainHelper.readString(forKey: parentPinUpdatedAtKey),
+        if enableSystemSideEffects,
+           let kcTsStr = KeychainHelper.readString(forKey: parentPinUpdatedAtKey),
            let kcTs = TimeInterval(kcTsStr) {
             self.parentPinUpdatedAt = kcTs
         } else {
-            let udTs = UserDefaults.standard.double(forKey: parentPinUpdatedAtKey)
+            let udTs = userDefaults.double(forKey: parentPinUpdatedAtKey)
             self.parentPinUpdatedAt = udTs > 0 ? udTs : 1_700_000_000
         }
 
         // 2. 오입력 잠금 상태 복원 (앱 강제 종료 후 재실행 시에도 잠금 유지)
-        if let attemptsStr = KeychainHelper.readString(forKey: "pin_failed_attempts"),
-           let attempts = Int(attemptsStr) {
-            self.failedPinAttempts = attempts
-        }
-        if let lockStr = KeychainHelper.readString(forKey: "pin_lockout_until"),
-           let lockTs = TimeInterval(lockStr), lockTs > Date().timeIntervalSince1970 {
-            self.pinLockoutUntil = Date(timeIntervalSince1970: lockTs)
+        if enableSystemSideEffects {
+            if let attemptsStr = KeychainHelper.readString(forKey: "pin_failed_attempts"),
+               let attempts = Int(attemptsStr) {
+                self.failedPinAttempts = attempts
+            }
+            if let lockStr = KeychainHelper.readString(forKey: "pin_lockout_until"),
+               let lockTs = TimeInterval(lockStr), lockTs > Date().timeIntervalSince1970 {
+                self.pinLockoutUntil = Date(timeIntervalSince1970: lockTs)
+            }
         }
 
         // 3. 기기 역할 로드 (아이의 폰 vs 부모님 폰)
-        if let roleRaw = UserDefaults.standard.string(forKey: deviceRoleStorageKey),
+        if let roleRaw = userDefaults.string(forKey: deviceRoleStorageKey),
            let role = DeviceRole(rawValue: roleRaw) {
             self.deviceRole = role
-            self.hasConfirmedDeviceRole = UserDefaults.standard.bool(forKey: deviceRoleConfirmedKey)
-        } else if let kcRoleRaw = KeychainHelper.readString(forKey: deviceRoleStorageKey),
+            self.hasConfirmedDeviceRole = userDefaults.bool(forKey: deviceRoleConfirmedKey)
+        } else if enableSystemSideEffects,
+                  let kcRoleRaw = KeychainHelper.readString(forKey: deviceRoleStorageKey),
                   let role = DeviceRole(rawValue: kcRoleRaw) {
             self.deviceRole = role
             self.hasConfirmedDeviceRole = true
@@ -2854,13 +3087,13 @@ final class ScheduleStore: ObservableObject {
     }
 
     private func loadSyncSettings() {
-        if let savedToken = UserDefaults.standard.string(forKey: vercelTokenStorageKey), !savedToken.isEmpty {
+        if let savedToken = userDefaults.string(forKey: vercelTokenStorageKey), !savedToken.isEmpty {
             self.vercelBlobToken = savedToken
         } else {
             self.vercelBlobToken = VercelBlobSyncService.defaultToken
         }
 
-        if let savedFamily = UserDefaults.standard.string(forKey: familyCodeStorageKey), !savedFamily.isEmpty {
+        if let savedFamily = userDefaults.string(forKey: familyCodeStorageKey), !savedFamily.isEmpty {
             self.familyCode = savedFamily
         } else {
             self.familyCode = VercelBlobSyncService.defaultFamilyCode
@@ -2868,7 +3101,7 @@ final class ScheduleStore: ObservableObject {
     }
 
     private func loadItems() {
-        if let data = UserDefaults.standard.data(forKey: itemsStorageKey),
+        if let data = userDefaults.data(forKey: itemsStorageKey),
            let decoded = try? JSONDecoder().decode([ScheduleItem].self, from: data),
            !decoded.isEmpty {
             self.items = decoded
@@ -2879,13 +3112,13 @@ final class ScheduleStore: ObservableObject {
 
     private func saveItems() {
         if let encoded = try? JSONEncoder().encode(items) {
-            UserDefaults.standard.set(encoded, forKey: itemsStorageKey)
+            userDefaults.set(encoded, forKey: itemsStorageKey)
         }
         syncWidgetState()
     }
 
     private func loadWeeklyOverrides() {
-        if let data = UserDefaults.standard.data(forKey: weeklyOverridesStorageKey),
+        if let data = userDefaults.data(forKey: weeklyOverridesStorageKey),
            let decoded = try? JSONDecoder().decode([String: WeeklyItemOverride].self, from: data) {
             self.weeklyOverrides = decoded
         }
@@ -2893,17 +3126,17 @@ final class ScheduleStore: ObservableObject {
 
     private func saveWeeklyOverrides() {
         if let encoded = try? JSONEncoder().encode(weeklyOverrides) {
-            UserDefaults.standard.set(encoded, forKey: weeklyOverridesStorageKey)
+            userDefaults.set(encoded, forKey: weeklyOverridesStorageKey)
         }
         syncWidgetState()
     }
 
     private func loadCompletions() {
-        if let data = UserDefaults.standard.data(forKey: completedItemsStorageKey),
+        if let data = userDefaults.data(forKey: completedItemsStorageKey),
            let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
             self.completedItemKeys = decoded
         }
-        if let data = UserDefaults.standard.data(forKey: completedSubTasksStorageKey),
+        if let data = userDefaults.data(forKey: completedSubTasksStorageKey),
            let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
             self.completedSubTaskKeys = decoded
         }
@@ -2912,19 +3145,19 @@ final class ScheduleStore: ObservableObject {
     private func saveCompletions() {
         guard !isRestoringLocalState else { return }
         if let encoded = try? JSONEncoder().encode(completedItemKeys) {
-            UserDefaults.standard.set(encoded, forKey: completedItemsStorageKey)
+            userDefaults.set(encoded, forKey: completedItemsStorageKey)
         }
         if let encoded = try? JSONEncoder().encode(completedSubTaskKeys) {
-            UserDefaults.standard.set(encoded, forKey: completedSubTasksStorageKey)
+            userDefaults.set(encoded, forKey: completedSubTasksStorageKey)
         }
     }
 
     private func loadParentVerifications() {
-        if let data = UserDefaults.standard.data(forKey: parentVerifiedItemsStorageKey),
+        if let data = userDefaults.data(forKey: parentVerifiedItemsStorageKey),
            let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
             self.parentVerifiedItemKeys = decoded
         }
-        if let data = UserDefaults.standard.data(forKey: parentVerifiedSubTasksStorageKey),
+        if let data = userDefaults.data(forKey: parentVerifiedSubTasksStorageKey),
            let decoded = try? JSONDecoder().decode(Set<String>.self, from: data) {
             self.parentVerifiedSubTaskKeys = decoded
         }
@@ -2933,32 +3166,32 @@ final class ScheduleStore: ObservableObject {
     private func saveParentVerifications() {
         guard !isRestoringLocalState else { return }
         if let encoded = try? JSONEncoder().encode(parentVerifiedItemKeys) {
-            UserDefaults.standard.set(encoded, forKey: parentVerifiedItemsStorageKey)
+            userDefaults.set(encoded, forKey: parentVerifiedItemsStorageKey)
         }
         if let encoded = try? JSONEncoder().encode(parentVerifiedSubTaskKeys) {
-            UserDefaults.standard.set(encoded, forKey: parentVerifiedSubTasksStorageKey)
+            userDefaults.set(encoded, forKey: parentVerifiedSubTasksStorageKey)
         }
     }
 
     private func loadReactionsAndPraises() {
-        if let data = UserDefaults.standard.data(forKey: reactionsStorageKey),
+        if let data = userDefaults.data(forKey: reactionsStorageKey),
            let decoded = try? JSONDecoder().decode([String: ItemParentReaction].self, from: data) {
             self.itemReactions = decoded
         }
-        if let data = UserDefaults.standard.data(forKey: praiseNotesStorageKey),
+        if let data = userDefaults.data(forKey: praiseNotesStorageKey),
            let decoded = try? JSONDecoder().decode([ParentPraiseNote].self, from: data) {
             self.praiseNotes = decoded
         }
-        if let data = UserDefaults.standard.data(forKey: rewardRedemptionsStorageKey),
+        if let data = userDefaults.data(forKey: rewardRedemptionsStorageKey),
            let decoded = try? JSONDecoder().decode([HeartRewardRedemption].self, from: data) {
             self.rewardRedemptions = decoded
         }
-        self.archivedEarnedHearts = UserDefaults.standard.integer(forKey: archivedEarnedHeartsStorageKey)
-        if let data = UserDefaults.standard.data(forKey: deletedRewardPresetsStorageKey),
+        self.archivedEarnedHearts = userDefaults.integer(forKey: archivedEarnedHeartsStorageKey)
+        if let data = userDefaults.data(forKey: deletedRewardPresetsStorageKey),
            let decoded = try? JSONDecoder().decode([String: TimeInterval].self, from: data) {
             deletedRewardPresetTimestamps = decoded
         }
-        if let data = UserDefaults.standard.data(forKey: rewardPresetsStorageKey),
+        if let data = userDefaults.data(forKey: rewardPresetsStorageKey),
            let decoded = try? JSONDecoder().decode([RewardPreset].self, from: data) {
             self.rewardPresets = RewardPreset.merged(decoded, deleted: &deletedRewardPresetTimestamps)
         } else {
@@ -2968,58 +3201,62 @@ final class ScheduleStore: ObservableObject {
 
     private func saveRewardPresets() {
         if let encoded = try? JSONEncoder().encode(deletedRewardPresetTimestamps) {
-            UserDefaults.standard.set(encoded, forKey: deletedRewardPresetsStorageKey)
+            userDefaults.set(encoded, forKey: deletedRewardPresetsStorageKey)
         }
         if let encoded = try? JSONEncoder().encode(rewardPresets) {
-            UserDefaults.standard.set(encoded, forKey: rewardPresetsStorageKey)
+            userDefaults.set(encoded, forKey: rewardPresetsStorageKey)
         }
     }
 
     private func saveReactionsAndPraises() {
         guard !isRestoringLocalState else { return }
         if let encoded = try? JSONEncoder().encode(itemReactions) {
-            UserDefaults.standard.set(encoded, forKey: reactionsStorageKey)
+            userDefaults.set(encoded, forKey: reactionsStorageKey)
         }
         if let encoded = try? JSONEncoder().encode(praiseNotes) {
-            UserDefaults.standard.set(encoded, forKey: praiseNotesStorageKey)
+            userDefaults.set(encoded, forKey: praiseNotesStorageKey)
         }
         if let encoded = try? JSONEncoder().encode(rewardRedemptions) {
-            UserDefaults.standard.set(encoded, forKey: rewardRedemptionsStorageKey)
+            userDefaults.set(encoded, forKey: rewardRedemptionsStorageKey)
         }
-        UserDefaults.standard.set(archivedEarnedHearts, forKey: archivedEarnedHeartsStorageKey)
+        userDefaults.set(archivedEarnedHearts, forKey: archivedEarnedHeartsStorageKey)
     }
 
     private func loadStarData() {
-        if let data = UserDefaults.standard.data(forKey: revokedStarTransactionsStorageKey),
+        if let data = userDefaults.data(forKey: revokedStarTransactionsStorageKey),
            let decoded = try? JSONDecoder().decode([String].self, from: data) {
             self.revokedStarTransactionIds = decoded
         }
-        if let data = UserDefaults.standard.data(forKey: revokedStarRedemptionsStorageKey),
+        if let data = userDefaults.data(forKey: revokedStarRedemptionsStorageKey),
            let decoded = try? JSONDecoder().decode([String].self, from: data) {
             self.revokedStarRedemptionIds = decoded
         }
-        if let data = UserDefaults.standard.data(forKey: revokedPraiseNotesStorageKey),
+        if let data = userDefaults.data(forKey: revokedPraiseNotesStorageKey),
            let decoded = try? JSONDecoder().decode([String].self, from: data) {
-            self.revokedPraiseNoteIds = decoded
+            self.revokedPraiseNoteIds = decoded.map { $0.uppercased() }
+        }
+        if let data = userDefaults.data(forKey: revokedRewardRedemptionsStorageKey),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            self.revokedRewardRedemptionIds = decoded.map { $0.uppercased() }
         }
 
-        if let data = UserDefaults.standard.data(forKey: starTransactionsStorageKey),
+        if let data = userDefaults.data(forKey: starTransactionsStorageKey),
            let decoded = try? JSONDecoder().decode([StarTransaction].self, from: data) {
             self.starTransactions = decoded
                 .filter { !self.revokedStarTransactionIds.contains($0.id) }
                 .sorted { $0.createdAt > $1.createdAt }
         }
-        if let data = UserDefaults.standard.data(forKey: starRedemptionsStorageKey),
+        if let data = userDefaults.data(forKey: starRedemptionsStorageKey),
            let decoded = try? JSONDecoder().decode([StarRedemptionRequest].self, from: data) {
             self.starRedemptionRequests = decoded
                 .filter { !self.revokedStarRedemptionIds.contains($0.id.uuidString) }
                 .sorted { $0.requestedAt > $1.requestedAt }
         }
-        if let data = UserDefaults.standard.data(forKey: deletedStarPresetsStorageKey),
+        if let data = userDefaults.data(forKey: deletedStarPresetsStorageKey),
            let decoded = try? JSONDecoder().decode([String: TimeInterval].self, from: data) {
             self.deletedStarPresetTimestamps = decoded
         }
-        if let data = UserDefaults.standard.data(forKey: starRewardPresetsStorageKey),
+        if let data = userDefaults.data(forKey: starRewardPresetsStorageKey),
            let decoded = try? JSONDecoder().decode([StarRewardPreset].self, from: data) {
             self.starRewardPresets = StarRewardPreset.merged(decoded, deleted: &deletedStarPresetTimestamps)
         } else {
@@ -3030,25 +3267,39 @@ final class ScheduleStore: ObservableObject {
     private func saveStarData() {
         guard !isRestoringLocalState else { return }
         if let encoded = try? JSONEncoder().encode(starTransactions) {
-            UserDefaults.standard.set(encoded, forKey: starTransactionsStorageKey)
+            userDefaults.set(encoded, forKey: starTransactionsStorageKey)
         }
         if let encoded = try? JSONEncoder().encode(starRedemptionRequests) {
-            UserDefaults.standard.set(encoded, forKey: starRedemptionsStorageKey)
+            userDefaults.set(encoded, forKey: starRedemptionsStorageKey)
         }
         if let encoded = try? JSONEncoder().encode(deletedStarPresetTimestamps) {
-            UserDefaults.standard.set(encoded, forKey: deletedStarPresetsStorageKey)
+            userDefaults.set(encoded, forKey: deletedStarPresetsStorageKey)
         }
         if let encoded = try? JSONEncoder().encode(starRewardPresets) {
-            UserDefaults.standard.set(encoded, forKey: starRewardPresetsStorageKey)
+            userDefaults.set(encoded, forKey: starRewardPresetsStorageKey)
         }
         if let encoded = try? JSONEncoder().encode(revokedStarTransactionIds) {
-            UserDefaults.standard.set(encoded, forKey: revokedStarTransactionsStorageKey)
+            userDefaults.set(encoded, forKey: revokedStarTransactionsStorageKey)
         }
         if let encoded = try? JSONEncoder().encode(revokedStarRedemptionIds) {
-            UserDefaults.standard.set(encoded, forKey: revokedStarRedemptionsStorageKey)
+            userDefaults.set(encoded, forKey: revokedStarRedemptionsStorageKey)
         }
         if let encoded = try? JSONEncoder().encode(revokedPraiseNoteIds) {
-            UserDefaults.standard.set(encoded, forKey: revokedPraiseNotesStorageKey)
+            userDefaults.set(encoded, forKey: revokedPraiseNotesStorageKey)
+        }
+        if let encoded = try? JSONEncoder().encode(revokedRewardRedemptionIds) {
+            userDefaults.set(encoded, forKey: revokedRewardRedemptionsStorageKey)
+        }
+    }
+
+    private func filterRevokedNotesAndRedemptions() {
+        let revokedNotes = Set(revokedPraiseNoteIds.map { $0.uppercased() })
+        if !revokedNotes.isEmpty {
+            praiseNotes.removeAll { revokedNotes.contains($0.id.uuidString.uppercased()) }
+        }
+        let revokedRedemptions = Set(revokedRewardRedemptionIds.map { $0.uppercased() })
+        if !revokedRedemptions.isEmpty {
+            rewardRedemptions.removeAll { revokedRedemptions.contains($0.id.uuidString.uppercased()) }
         }
     }
 
@@ -3061,7 +3312,7 @@ final class ScheduleStore: ObservableObject {
     }
 
     private func loadSyncFlags() {
-        guard let data = UserDefaults.standard.data(forKey: syncFlagsStorageKey),
+        guard let data = userDefaults.data(forKey: syncFlagsStorageKey),
               let bundle = try? JSONDecoder().decode(LocalSyncFlagsBundle.self, from: data) else {
             return
         }
@@ -3081,7 +3332,7 @@ final class ScheduleStore: ObservableObject {
             parentVerifiedSubTaskFlags: parentVerifiedSubTaskFlags
         )
         if let encoded = try? JSONEncoder().encode(bundle) {
-            UserDefaults.standard.set(encoded, forKey: syncFlagsStorageKey)
+            userDefaults.set(encoded, forKey: syncFlagsStorageKey)
         }
         syncWidgetState()
     }
@@ -3089,7 +3340,7 @@ final class ScheduleStore: ObservableObject {
     // MARK: - Home Screen Interactive Widget Bridge
 
     func syncWidgetState() {
-        guard !isRestoringLocalState else { return }
+        guard !isRestoringLocalState, enableSystemSideEffects else { return }
         ScheduleWidgetDataManager.shared.saveStateFromMainApp(
             vercelBlobToken: vercelBlobToken,
             familyCode: familyCode,

@@ -938,7 +938,7 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       expect(store.getAvailableHearts()).toBe(10);
     });
 
-    it('caps redemption history to a 50-item ring buffer', () => {
+    it('preserves full redemption ledger beyond 50 items so spent hearts are never lost', () => {
       const store = new ScheduleStore();
       store.sendFamilyPraise({
         hearts: 100,
@@ -951,12 +951,11 @@ describe('ScheduleStore & CalendarUtils (Seam 1)', () => {
       }
 
       const redemptions = store.getRewardRedemptions();
-      expect(redemptions).toHaveLength(50);
-      // Newest should be #55, oldest in ring buffer should be #6
+      expect(redemptions).toHaveLength(55);
       expect(redemptions[0].title).toBe('보상 #55');
-      expect(redemptions[49].title).toBe('보상 #6');
-      expect(store.getTotalSpentHearts()).toBe(50);
-      expect(store.getAvailableHearts()).toBe(50);
+      expect(redemptions[54].title).toBe('보상 #1');
+      expect(store.getTotalSpentHearts()).toBe(55);
+      expect(store.getAvailableHearts()).toBe(45);
     });
 
     it('refunds and cancels reward redemption, restores available balance, emits toast, and notifies subscribers', () => {

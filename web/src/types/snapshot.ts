@@ -277,4 +277,5 @@ export interface CloudSyncSnapshot {
   revokedStarTransactionIds: string[];
   revokedStarRedemptionIds: string[];
   revokedPraiseNoteIds: string[];
+  revokedRewardRedemptionIds?: string[];
 }

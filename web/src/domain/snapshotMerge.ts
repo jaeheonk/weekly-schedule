@@ -330,29 +330,31 @@ export function mergeStarRedemptionRequests(
   remote: StarRedemptionRequest[] = [],
   revokedIds: string[] = []
 ): StarRedemptionRequest[] {
-  const revokedSet = new Set(revokedIds);
+  const revokedSet = new Set(revokedIds.map((id) => id.toUpperCase()));
   const reqById = new Map<string, StarRedemptionRequest>();
 
   for (const req of local) {
-    if (!revokedSet.has(req.id)) {
-      reqById.set(req.id, req);
+    const key = req.id.toUpperCase();
+    if (!revokedSet.has(key)) {
+      reqById.set(key, req);
     }
   }
 
   for (const rReq of remote) {
-    if (revokedSet.has(rReq.id)) continue;
-    const lReq = reqById.get(rReq.id);
+    const key = rReq.id.toUpperCase();
+    if (revokedSet.has(key)) continue;
+    const lReq = reqById.get(key);
     if (lReq) {
       if (lReq.status !== 'pending' && rReq.status === 'pending') {
         continue; // Keep locally resolved status
       }
       if (rReq.status !== 'pending' && lReq.status === 'pending') {
-        reqById.set(rReq.id, rReq);
+        reqById.set(key, rReq);
       } else if (rReq.updatedAt >= lReq.updatedAt) {
-        reqById.set(rReq.id, rReq);
+        reqById.set(key, rReq);
       }
     } else {
-      reqById.set(rReq.id, rReq);
+      reqById.set(key, rReq);
     }
   }
 
@@ -439,15 +441,31 @@ export function mergeSnapshots(
     remote.deletedStarPresetTimestamps
   );
 
-  // 3. Revoked IDs set union
+  // 3. Revoked IDs set union (canonical uppercase normalization for UUIDs)
   const revokedStarTransactionIds = Array.from(
     new Set([...(local.revokedStarTransactionIds || []), ...(remote.revokedStarTransactionIds || [])])
   );
   const revokedStarRedemptionIds = Array.from(
-    new Set([...(local.revokedStarRedemptionIds || []), ...(remote.revokedStarRedemptionIds || [])])
+    new Set(
+      [...(local.revokedStarRedemptionIds || []), ...(remote.revokedStarRedemptionIds || [])].map(
+        (id) => id.toUpperCase()
+      )
+    )
   );
   const revokedPraiseNoteIds = Array.from(
-    new Set([...(local.revokedPraiseNoteIds || []), ...(remote.revokedPraiseNoteIds || [])])
+    new Set(
+      [...(local.revokedPraiseNoteIds || []), ...(remote.revokedPraiseNoteIds || [])].map((id) =>
+        id.toUpperCase()
+      )
+    )
+  );
+  const revokedRewardRedemptionIds = Array.from(
+    new Set(
+      [
+        ...(local.revokedRewardRedemptionIds || []),
+        ...(remote.revokedRewardRedemptionIds || []),
+      ].map((id) => id.toUpperCase())
+    )
   );
 
   // 4. Merge flags
@@ -472,26 +490,31 @@ export function mergeSnapshots(
   // 6. Merge schedule items
   const items = mergeScheduleItems(local.items, remote.items, deletedItemTimestamps);
 
-  // 7. Merge praise notes (exclude revoked, keep top 40)
+  // 7. Merge praise notes (exclude revoked case-insensitively, keep top 40)
   const revokedNotesSet = new Set(revokedPraiseNoteIds);
   const noteById = new Map<string, ParentPraiseNote>();
   for (const n of [...(local.praiseNotes || []), ...(remote.praiseNotes || [])]) {
-    if (!revokedNotesSet.has(n.id)) {
-      noteById.set(n.id, n);
+    const key = n.id.toUpperCase();
+    if (!revokedNotesSet.has(key)) {
+      noteById.set(key, n);
     }
   }
   const praiseNotes = Array.from(noteById.values())
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 40);
 
-  // 8. Merge reward redemptions (keep top 50)
+  // 8. Merge reward redemptions (exclude revoked case-insensitively, preserve full append-only ledger)
+  const revokedRedemptionsSet = new Set(revokedRewardRedemptionIds);
   const redemptionById = new Map<string, HeartRewardRedemption>();
   for (const r of [...(local.rewardRedemptions || []), ...(remote.rewardRedemptions || [])]) {
-    redemptionById.set(r.id, r);
+    const key = r.id.toUpperCase();
+    if (!revokedRedemptionsSet.has(key)) {
+      redemptionById.set(key, r);
+    }
   }
-  const rewardRedemptions = Array.from(redemptionById.values())
-    .sort((a, b) => b.createdAt - a.createdAt)
-    .slice(0, 50);
+  const rewardRedemptions = Array.from(redemptionById.values()).sort(
+    (a, b) => b.createdAt - a.createdAt
+  );
 
   // 9. Archived earned hearts (max)
   const archivedEarnedHearts = Math.max(
@@ -561,5 +584,101 @@ export function mergeSnapshots(
     revokedStarTransactionIds,
     revokedStarRedemptionIds,
     revokedPraiseNoteIds,
+    revokedRewardRedemptionIds,
   };
+}
+
+function stableNormalizeValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableNormalizeValue);
+  }
+  if (value && typeof value === 'object') {
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      const val = (value as Record<string, unknown>)[key];
+      if (val !== undefined) {
+        sorted[key] = stableNormalizeValue(val);
+      }
+    }
+    return sorted;
+  }
+  return value;
+}
+
+function normalizeDictKeys<T>(
+  dict: Record<string, T> | undefined,
+  keyTransform: (k: string) => string
+): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const [k, v] of Object.entries(dict || {})) {
+    out[keyTransform(k)] = v;
+  }
+  return out;
+}
+
+function canonicalizeSyncState(s: CloudSyncSnapshot): unknown {
+  return stableNormalizeValue({
+    parentPinCode: s.parentPinCode,
+    parentPinUpdatedAt: s.parentPinUpdatedAt,
+    archivedEarnedHearts: s.archivedEarnedHearts || 0,
+    deletedItemTimestamps: normalizeDictKeys(s.deletedItemTimestamps, (k) => k.toUpperCase()),
+    deletedRewardPresetTimestamps: normalizeDictKeys(s.deletedRewardPresetTimestamps, (k) =>
+      k.toUpperCase()
+    ),
+    deletedStarPresetTimestamps: normalizeDictKeys(s.deletedStarPresetTimestamps, (k) =>
+      k.toUpperCase()
+    ),
+    weeklyOverrides: normalizeDictKeys(s.weeklyOverrides, normalizeCompoundKey),
+    completionFlags: normalizeDictKeys(s.completionFlags, normalizeCompoundKey),
+    subTaskCompletionFlags: normalizeDictKeys(s.subTaskCompletionFlags, normalizeCompoundKey),
+    parentVerifiedFlags: normalizeDictKeys(s.parentVerifiedFlags, normalizeCompoundKey),
+    parentVerifiedSubTaskFlags: normalizeDictKeys(
+      s.parentVerifiedSubTaskFlags,
+      normalizeCompoundKey
+    ),
+    itemReactions: normalizeDictKeys(s.itemReactions, normalizeCompoundKey),
+    items: [...(s.items || [])].sort((a, b) =>
+      a.id.toUpperCase().localeCompare(b.id.toUpperCase())
+    ),
+    praiseNotes: [...(s.praiseNotes || [])].sort(
+      (a, b) => b.createdAt - a.createdAt || a.id.toUpperCase().localeCompare(b.id.toUpperCase())
+    ),
+    rewardRedemptions: [...(s.rewardRedemptions || [])].sort(
+      (a, b) => b.createdAt - a.createdAt || a.id.toUpperCase().localeCompare(b.id.toUpperCase())
+    ),
+    rewardPresets: [...(s.rewardPresets || [])].sort((a, b) =>
+      a.id.toUpperCase().localeCompare(b.id.toUpperCase())
+    ),
+    starTransactions: [...(s.starTransactions || [])].sort(
+      (a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id)
+    ),
+    starRedemptionRequests: [...(s.starRedemptionRequests || [])].sort(
+      (a, b) => b.requestedAt - a.requestedAt || a.id.toUpperCase().localeCompare(b.id.toUpperCase())
+    ),
+    starRewardPresets: [...(s.starRewardPresets || [])].sort((a, b) =>
+      a.id.toUpperCase().localeCompare(b.id.toUpperCase())
+    ),
+    revokedStarTransactionIds: Array.from(new Set(s.revokedStarTransactionIds || [])).sort(),
+    revokedStarRedemptionIds: Array.from(
+      new Set((s.revokedStarRedemptionIds || []).map((id) => id.toUpperCase()))
+    ).sort(),
+    revokedPraiseNoteIds: Array.from(
+      new Set((s.revokedPraiseNoteIds || []).map((id) => id.toUpperCase()))
+    ).sort(),
+    revokedRewardRedemptionIds: Array.from(
+      new Set((s.revokedRewardRedemptionIds || []).map((id) => id.toUpperCase()))
+    ).sort(),
+  });
+}
+
+/**
+ * Returns true if two snapshots represent the exact same synced domain state,
+ * ignoring volatile metadata (updatedAt, updatedByRole, updatedByDeviceId, schemaVersion, familyCode)
+ * and array ordering / UUID casing.
+ */
+export function areSnapshotsSyncEquivalent(
+  a: CloudSyncSnapshot,
+  b: CloudSyncSnapshot
+): boolean {
+  return JSON.stringify(canonicalizeSyncState(a)) === JSON.stringify(canonicalizeSyncState(b));
 }

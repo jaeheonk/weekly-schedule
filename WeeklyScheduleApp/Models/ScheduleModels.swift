@@ -988,6 +988,9 @@ struct CloudSyncSnapshot: Codable, Equatable {
     /// 취소/원복된 칭찬/응원 노트 ID 목록 (스타 환전 하트 원복용)
     var revokedPraiseNoteIds: [String] = []
 
+    /// 취소/환불된 하트 보상 교환 ID 목록 (동기화 시 부활 방지용 Tombstone)
+    var revokedRewardRedemptionIds: [String] = []
+
     enum CodingKeys: String, CodingKey {
         case schemaVersion, familyCode, updatedAt, updatedByRole, updatedByDeviceId
         case parentPinCode, parentPinUpdatedAt
@@ -996,7 +999,7 @@ struct CloudSyncSnapshot: Codable, Equatable {
         case itemReactions, praiseNotes
         case rewardRedemptions, archivedEarnedHearts, rewardPresets, deletedRewardPresetTimestamps
         case starTransactions, starRedemptionRequests, starRewardPresets, deletedStarPresetTimestamps
-        case revokedStarTransactionIds, revokedStarRedemptionIds, revokedPraiseNoteIds
+        case revokedStarTransactionIds, revokedStarRedemptionIds, revokedPraiseNoteIds, revokedRewardRedemptionIds
     }
 
     init(
@@ -1026,7 +1029,8 @@ struct CloudSyncSnapshot: Codable, Equatable {
         deletedStarPresetTimestamps: [String: TimeInterval] = [:],
         revokedStarTransactionIds: [String] = [],
         revokedStarRedemptionIds: [String] = [],
-        revokedPraiseNoteIds: [String] = []
+        revokedPraiseNoteIds: [String] = [],
+        revokedRewardRedemptionIds: [String] = []
     ) {
         self.schemaVersion = schemaVersion
         self.familyCode = familyCode
@@ -1055,6 +1059,7 @@ struct CloudSyncSnapshot: Codable, Equatable {
         self.revokedStarTransactionIds = revokedStarTransactionIds
         self.revokedStarRedemptionIds = revokedStarRedemptionIds
         self.revokedPraiseNoteIds = revokedPraiseNoteIds
+        self.revokedRewardRedemptionIds = revokedRewardRedemptionIds
     }
 
     init(from decoder: Decoder) throws {
@@ -1087,6 +1092,7 @@ struct CloudSyncSnapshot: Codable, Equatable {
         revokedStarTransactionIds = try container.decodeIfPresent([String].self, forKey: .revokedStarTransactionIds) ?? []
         revokedStarRedemptionIds = try container.decodeIfPresent([String].self, forKey: .revokedStarRedemptionIds) ?? []
         revokedPraiseNoteIds = try container.decodeIfPresent([String].self, forKey: .revokedPraiseNoteIds) ?? []
+        revokedRewardRedemptionIds = try container.decodeIfPresent([String].self, forKey: .revokedRewardRedemptionIds) ?? []
     }
 }
 

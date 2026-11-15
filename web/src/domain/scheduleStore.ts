@@ -127,6 +127,7 @@ export class ScheduleStore {
   private revokedStarTransactionIds: string[] = [];
   private revokedStarRedemptionIds: string[] = [];
   private revokedPraiseNoteIds: string[] = [];
+  private revokedRewardRedemptionIds: string[] = [];
   private celebrationContext: StarCelebrationContext | null = null;
 
   constructor(options: ScheduleStoreOptions = {}) {
@@ -653,6 +654,7 @@ export class ScheduleStore {
     this.revokedStarTransactionIds = [];
     this.revokedStarRedemptionIds = [];
     this.revokedPraiseNoteIds = [];
+    this.revokedRewardRedemptionIds = [];
     this.celebrationContext = null;
 
     try {
@@ -679,10 +681,27 @@ export class ScheduleStore {
           this.revokedStarTransactionIds = meta.revokedStarTransactionIds;
         if (meta.revokedStarRedemptionIds)
           this.revokedStarRedemptionIds = meta.revokedStarRedemptionIds;
-        if (meta.revokedPraiseNoteIds) this.revokedPraiseNoteIds = meta.revokedPraiseNoteIds;
+        if (meta.revokedPraiseNoteIds)
+          this.revokedPraiseNoteIds = (meta.revokedPraiseNoteIds as string[]).map((id) =>
+            id.toUpperCase()
+          );
+        if (meta.revokedRewardRedemptionIds)
+          this.revokedRewardRedemptionIds = (meta.revokedRewardRedemptionIds as string[]).map(
+            (id) => id.toUpperCase()
+          );
       }
     } catch {
       // ignore
+    }
+    if (this.revokedPraiseNoteIds.length > 0) {
+      const revokedNotes = new Set(this.revokedPraiseNoteIds);
+      this.praiseNotes = this.praiseNotes.filter((n) => !revokedNotes.has(n.id.toUpperCase()));
+    }
+    if (this.revokedRewardRedemptionIds.length > 0) {
+      const revokedRedemptions = new Set(this.revokedRewardRedemptionIds);
+      this.rewardRedemptions = this.rewardRedemptions.filter(
+        (r) => !revokedRedemptions.has(r.id.toUpperCase())
+      );
     }
     if (!this.starRewardPresets || this.starRewardPresets.length === 0) {
       this.starRewardPresets = [...DEFAULT_STAR_PRESETS];
@@ -714,6 +733,7 @@ export class ScheduleStore {
         revokedStarTransactionIds: this.revokedStarTransactionIds,
         revokedStarRedemptionIds: this.revokedStarRedemptionIds,
         revokedPraiseNoteIds: this.revokedPraiseNoteIds,
+        revokedRewardRedemptionIds: this.revokedRewardRedemptionIds,
       };
       localStorage.setItem(STORAGE_KEYS.SNAPSHOT_STATE, JSON.stringify(meta));
     } catch {
@@ -731,26 +751,27 @@ export class ScheduleStore {
       updatedByDeviceId: this.deviceId,
       parentPinCode: this.parentPinCode,
       parentPinUpdatedAt: this.parentPinUpdatedAt,
-      items: this.items,
-      deletedItemTimestamps: this.deletedItemTimestamps,
-      weeklyOverrides: this.weeklyOverrides,
-      completionFlags: this.completionFlags,
-      subTaskCompletionFlags: this.subTaskCompletionFlags,
-      parentVerifiedFlags: this.parentVerifiedFlags,
-      parentVerifiedSubTaskFlags: this.parentVerifiedSubTaskFlags,
-      itemReactions: this.itemReactions,
-      praiseNotes: this.praiseNotes,
-      rewardRedemptions: this.rewardRedemptions,
+      items: this.items.map((it) => ({ ...it, subTasks: it.subTasks ? it.subTasks.map((s) => ({ ...s })) : [] })),
+      deletedItemTimestamps: { ...this.deletedItemTimestamps },
+      weeklyOverrides: { ...this.weeklyOverrides },
+      completionFlags: { ...this.completionFlags },
+      subTaskCompletionFlags: { ...this.subTaskCompletionFlags },
+      parentVerifiedFlags: { ...this.parentVerifiedFlags },
+      parentVerifiedSubTaskFlags: { ...this.parentVerifiedSubTaskFlags },
+      itemReactions: { ...this.itemReactions },
+      praiseNotes: [...this.praiseNotes],
+      rewardRedemptions: [...this.rewardRedemptions],
       archivedEarnedHearts: this.archivedEarnedHearts,
-      rewardPresets: this.rewardPresets,
-      deletedRewardPresetTimestamps: this.deletedRewardPresetTimestamps,
-      starTransactions: this.starTransactions,
-      starRedemptionRequests: this.starRedemptionRequests,
-      starRewardPresets: this.starRewardPresets,
-      deletedStarPresetTimestamps: this.deletedStarPresetTimestamps,
-      revokedStarTransactionIds: this.revokedStarTransactionIds,
-      revokedStarRedemptionIds: this.revokedStarRedemptionIds,
-      revokedPraiseNoteIds: this.revokedPraiseNoteIds,
+      rewardPresets: [...this.rewardPresets],
+      deletedRewardPresetTimestamps: { ...this.deletedRewardPresetTimestamps },
+      starTransactions: [...this.starTransactions],
+      starRedemptionRequests: [...this.starRedemptionRequests],
+      starRewardPresets: [...this.starRewardPresets],
+      deletedStarPresetTimestamps: { ...this.deletedStarPresetTimestamps },
+      revokedStarTransactionIds: [...this.revokedStarTransactionIds],
+      revokedStarRedemptionIds: [...this.revokedStarRedemptionIds],
+      revokedPraiseNoteIds: [...this.revokedPraiseNoteIds],
+      revokedRewardRedemptionIds: [...this.revokedRewardRedemptionIds],
     };
   }
 
@@ -778,6 +799,7 @@ export class ScheduleStore {
     this.revokedStarTransactionIds = merged.revokedStarTransactionIds;
     this.revokedStarRedemptionIds = merged.revokedStarRedemptionIds;
     this.revokedPraiseNoteIds = merged.revokedPraiseNoteIds;
+    this.revokedRewardRedemptionIds = merged.revokedRewardRedemptionIds || [];
 
     this.parentPinCode = merged.parentPinCode;
     this.parentPinUpdatedAt = merged.parentPinUpdatedAt;
@@ -1348,9 +1370,6 @@ export class ScheduleStore {
       redeemedByRole: this.deviceRole === 'parent' ? '부모' : '아이',
     };
     this.rewardRedemptions.unshift(redemption);
-    if (this.rewardRedemptions.length > 50) {
-      this.rewardRedemptions = this.rewardRedemptions.slice(0, 50);
-    }
     this.saveSnapshotMeta();
     this.notify();
     this.emitToast(
@@ -1369,6 +1388,10 @@ export class ScheduleStore {
       return false;
     }
     const [removed] = this.rewardRedemptions.splice(index, 1);
+    const upperId = removed.id.toUpperCase();
+    if (!this.revokedRewardRedemptionIds.includes(upperId)) {
+      this.revokedRewardRedemptionIds.push(upperId);
+    }
     this.saveSnapshotMeta();
     this.notify();
     this.emitToast(

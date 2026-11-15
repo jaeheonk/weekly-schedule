@@ -34,7 +34,24 @@ enum VercelBlobSyncError: LocalizedError {
     }
 }
 
-final class VercelBlobSyncService {
+protocol CloudSyncTransport {
+    func fetchLatestBlobMetadata(
+        token: String,
+        familyCode: String
+    ) async throws -> (latest: VercelBlobItem?, allBlobs: [VercelBlobItem])
+
+    func downloadSnapshot(from blobURLString: String, token: String) async throws -> CloudSyncSnapshot
+
+    func uploadSnapshot(
+        _ snapshot: CloudSyncSnapshot,
+        token: String,
+        familyCode: String,
+        shortDeviceId: String,
+        previousBlobsToDelete: [VercelBlobItem]
+    ) async throws -> VercelBlobPutResponse
+}
+
+final class VercelBlobSyncService: CloudSyncTransport {
     static let shared = VercelBlobSyncService()
 
     /// 사용자 제공 기본 Vercel Blob Read/Write 토큰
