@@ -16,7 +16,7 @@ LOG="$LOG_DIR/weekly-schedule-refresh.log"
 BUNDLE_ID="com.jae.weeklyschedule.app"
 
 mkdir -p "$LOG_DIR"
-{
+run_refresh() {
 echo "=== $(date '+%Y-%m-%d %H:%M:%S %Z') refresh start ==="
 DEVICES=("Jaeheon의 iPhone" "Bluelock" "hana의 iPhone")
 VISIBLE=()
@@ -116,5 +116,14 @@ for DEVICE in "${VISIBLE[@]}"; do
   fi
 done
 echo "=== refresh finished (status=$OVERALL) ==="
-exit $OVERALL
-} >> "$LOG" 2>&1
+return $OVERALL
+}
+
+if [ -t 1 ]; then
+  set -o pipefail
+  run_refresh 2>&1 | tee -a "$LOG"
+  exit $?
+else
+  run_refresh >> "$LOG" 2>&1
+  exit $?
+fi

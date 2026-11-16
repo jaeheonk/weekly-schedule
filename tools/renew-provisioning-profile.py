@@ -47,6 +47,18 @@ def created_at(profile: dict) -> datetime:
     return created
 
 
+def expires_at(profile: dict) -> datetime:
+    expires = profile["ExpirationDate"]
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    return expires
+
+
+def is_expired(profile: dict, now: datetime | None = None) -> bool:
+    current = now or datetime.now(timezone.utc)
+    return expires_at(profile) <= current
+
+
 def describe(profile: dict) -> str:
     created = created_at(profile).astimezone()
     expires = profile["ExpirationDate"]
@@ -139,6 +151,9 @@ def preserve_complete(backup_dir: Path, bundle_ids: list[str], udids: list[str])
     backup_dir.mkdir(parents=True, exist_ok=True)
     kept = 0
     for path, profile in local_profiles(bundle_ids):
+        if is_expired(profile):
+            print(f"Not keeping expired profile {describe(profile)}")
+            continue
         if not profile_has_udids(profile, udids):
             print(f"Not keeping incomplete profile {describe(profile)}")
             continue
@@ -151,16 +166,22 @@ def preserve_complete(backup_dir: Path, bundle_ids: list[str], udids: list[str])
 
 def matching_backup(backup_dir: Path, current: dict, udids: list[str]) -> Path | None:
     app_id = str(current.get("Entitlements", {}).get("application-identifier", ""))
-    found = None
+    best_key: tuple[datetime, datetime] | None = None
+    best_path: Path | None = None
+    now = datetime.now(timezone.utc)
     for path in sorted(backup_dir.glob("*.mobileprovision")):
         try:
             profile = decode(path)
         except (subprocess.CalledProcessError, plistlib.InvalidFileException, KeyError, ValueError):
             continue
         other = str(profile.get("Entitlements", {}).get("application-identifier", ""))
-        if other == app_id and profile_has_udids(profile, udids):
-            found = path
-    return found
+        if other != app_id or is_expired(profile, now) or not profile_has_udids(profile, udids):
+            continue
+        key = (expires_at(profile), created_at(profile))
+        if best_key is None or key > best_key:
+            best_key = key
+            best_path = path
+    return best_path
 
 
 def resign_bundle(bundle: Path, profile_path: Path) -> None:
@@ -196,15 +217,16 @@ def ensure_devices(backup_dir: Path, bundles: list[str], udids: list[str]) -> in
             failed = True
             continue
         current = decode(embedded)
-        if profile_has_udids(current, udids):
+        if not is_expired(current) and profile_has_udids(current, udids):
             print(f"Installable profile in {bundle.name}: {describe(current)}")
             continue
         replacement = matching_backup(backup_dir, current, udids)
         if replacement is None:
-            print(f"ERROR: no saved profile for {bundle.name} contains all target devices")
+            print(f"ERROR: no non-expired saved profile for {bundle.name} contains all target devices")
             failed = True
             continue
-        print(f"New profile omitted a target device; restoring {replacement.name}")
+        reason = "Current profile is expired" if is_expired(current) else "New profile omitted a target device"
+        print(f"{reason}; restoring {replacement.name}")
         resign_bundle(bundle, replacement)
     return 1 if failed else 0
 
