@@ -93,8 +93,10 @@ describe('App & Hash Navigation (Seam 2)', () => {
     const initialChecked = firstCheckBtn.getAttribute('aria-checked');
     expect(initialChecked).toBe('false');
 
-    // Click check button
+    // Click check button -> opens double-confirmation dialog
     fireEvent.click(firstCheckBtn);
+    expect(screen.getByTestId('completion-confirm-dialog')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('confirm-completion-btn'));
 
     // Should now be checked
     expect(firstCheckBtn.getAttribute('aria-checked')).toBe('true');
@@ -123,10 +125,11 @@ describe('App & Hash Navigation (Seam 2)', () => {
     it('opens Parent PIN modal, switches to parent mode upon entering correct PIN, stamps item and locks back', async () => {
       render(<App syncOnMount={false} />);
 
-      // Child completes the first checkable item
+      // Child completes the first checkable item (via double-confirmation dialog)
       const checkBtns = screen.getAllByRole('button', { name: /다 했어요|완료됨/i });
       expect(checkBtns.length).toBeGreaterThan(0);
       fireEvent.click(checkBtns[0]);
+      fireEvent.click(screen.getByTestId('confirm-completion-btn'));
 
       // Initially in child mode, switch button is in header
       const modeSwitchBtn = screen.getByTestId('mode-switch-button');

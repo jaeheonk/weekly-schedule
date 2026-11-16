@@ -39,6 +39,10 @@ import { ScheduleStore, globalScheduleStore } from '../domain/scheduleStore';
 import { playCompletionChime } from '../services/soundEffects';
 import { WeeklyStarStampBoardCard } from './WeeklyStarStampBoardCard';
 import { ParentPinModal } from './ParentPinModal';
+import {
+  CompletionConfirmModal,
+  CompletionConfirmContext,
+} from './CompletionConfirmModal';
 
 export interface TodayScheduleViewProps {
   items?: ScheduleItem[];
@@ -102,6 +106,8 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
     useState<ScheduleCategoryType | null>(null);
   const [showingResetAdjustmentsDialog, setShowingResetAdjustmentsDialog] =
     useState<boolean>(false);
+  const [completionConfirm, setCompletionConfirm] =
+    useState<CompletionConfirmContext | null>(null);
   const [pinPrompt, setPinPrompt] = useState<{
     reason: string;
     onConfirm: () => void;
@@ -237,6 +243,44 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
 
     if (!wasDone) {
       onPlayChime();
+    }
+  };
+
+  const requestItemToggle = (item: ScheduleItem) => {
+    if (!store.isItemCheckable(item)) return;
+    if (store.isParentVerified(item) && store.getDeviceRole() === 'child') {
+      showNotice('부모님이 확인 완료한 숙제는 변경할 수 없어요 🔒');
+      return;
+    }
+    setCompletionConfirm({
+      target: { kind: 'item', item },
+      isCurrentlyCompleted: store.isCompleted(item),
+    });
+  };
+
+  const requestSubTaskToggle = (sub: SubTask, parentItem: ScheduleItem) => {
+    if (!store.isItemCheckable(parentItem)) return;
+    if (
+      (store.isSubTaskParentVerified(sub) || store.isParentVerified(parentItem)) &&
+      store.getDeviceRole() === 'child'
+    ) {
+      showNotice('부모님이 확인 완료한 숙제는 변경할 수 없어요 🔒');
+      return;
+    }
+    setCompletionConfirm({
+      target: { kind: 'subTask', subTask: sub, parentItem },
+      isCurrentlyCompleted: store.isSubTaskCompleted(sub),
+    });
+  };
+
+  const executeConfirmedCompletion = () => {
+    if (!completionConfirm) return;
+    const ctx = completionConfirm;
+    setCompletionConfirm(null);
+    if (ctx.target.kind === 'item') {
+      handleItemToggle(ctx.target.item);
+    } else {
+      handleSubTaskToggle(ctx.target.subTask, ctx.target.parentItem);
     }
   };
 
@@ -1009,7 +1053,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                         data-testid={`item-check-btn-${item.id}`}
                         aria-checked={isCompleted}
                         data-verified={isVerified}
-                        onClick={() => handleItemToggle(item)}
+                        onClick={() => requestItemToggle(item)}
                         className={`w-9 h-9 rounded-2xl flex items-center justify-center transition-all ${
                           isVerified
                             ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/20'
@@ -1192,7 +1236,7 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
                                           ? '완료 취소'
                                           : '다 했어요'
                                       }
-                                      onClick={() => handleSubTaskToggle(sub, item)}
+                                      onClick={() => requestSubTaskToggle(sub, item)}
                                       className={`w-4 h-4 rounded flex items-center justify-center transition-all shrink-0 ${
                                         subVerified
                                           ? 'bg-emerald-600 text-white'
@@ -1453,6 +1497,13 @@ export const TodayScheduleView: React.FC<TodayScheduleViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Double-Confirmation Dialog for Schedule Item / SubTask Completion */}
+      <CompletionConfirmModal
+        context={completionConfirm}
+        onConfirm={executeConfirmedCompletion}
+        onCancel={() => setCompletionConfirm(null)}
+      />
 
       {/* Standalone 6-Digit Master PIN Authentication Modal when not delegated to App */}
       {!onRequestParentAuth && (

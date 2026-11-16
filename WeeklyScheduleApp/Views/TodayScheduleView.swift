@@ -12,6 +12,7 @@ struct TodayScheduleView: View {
     @State private var praisePrompt: PraiseHeartPromptContext? = nil
     @State private var showingRewardExchangeSheet: Bool = false
     @State private var showingStarShopSheet: Bool = false
+    @State private var completionConfirmContext: CompletionConfirmContext? = nil
 
     private var filteredItems: [ScheduleItem] {
         let dayItems = store.items(for: store.selectedWeekday)
@@ -47,6 +48,9 @@ struct TodayScheduleView: View {
                                 store.selectedWeekday = item.weekday
                                 editingScope = .thisWeek
                                 editingItem = item
+                            },
+                            onRequestToggleCompletion: { item in
+                                requestToggleCompletion(for: item)
                             },
                             onRequestParentAuth: { reason, action in
                                 performParentAction(reason: reason, action: action)
@@ -112,6 +116,12 @@ struct TodayScheduleView: View {
                                         onTapEditMaster: {
                                             editingScope = .master
                                             editingItem = item
+                                        },
+                                        onRequestToggleCompletion: { targetItem in
+                                            requestToggleCompletion(for: targetItem)
+                                        },
+                                        onRequestToggleSubTaskCompletion: { sub, parentItem in
+                                            requestToggleSubTaskCompletion(sub, in: parentItem)
                                         },
                                         onRequestParentAuth: { reason, action in
                                             performParentAction(reason: reason, action: action)
@@ -303,8 +313,92 @@ struct TodayScheduleView: View {
                 } message: {
                     Text("일정을 원래 시간으로 되돌려도 이번 주에 완료 체크한 기록과 부모님 확인 도장·하트는 그대로 유지됩니다.")
                 }
+                .alert(
+                    completionConfirmContext?.titleText ?? "완료 체크 확인",
+                    isPresented: Binding(
+                        get: { completionConfirmContext != nil },
+                        set: { isPresented in
+                            if !isPresented {
+                                completionConfirmContext = nil
+                            }
+                        }
+                    ),
+                    presenting: completionConfirmContext
+                ) { context in
+                    Button(
+                        context.confirmButtonTitle,
+                        role: context.isCurrentlyCompleted ? .destructive : nil
+                    ) {
+                        executeConfirmedCompletion(context)
+                    }
+                    Button("취소", role: .cancel) {
+                        completionConfirmContext = nil
+                    }
+                } message: { context in
+                    Text(context.messageText)
+                }
             }
         }
+    }
+
+    private func requestToggleCompletion(for item: ScheduleItem) {
+        guard item.isCheckable else { return }
+        guard store.deviceRole == .child else {
+            _ = store.toggleCompletion(for: item)
+            return
+        }
+        let isParentVerified = store.isParentVerified(item)
+        if isParentVerified && !store.isParentModeUnlocked {
+            performParentAction(
+                reason: "이미 부모님이 확인 완료한 숙제예요.\n체크를 해제하려면 부모님 6자리 마스터 PIN을 입력해 주세요."
+            ) {
+                _ = store.toggleCompletion(for: item)
+            }
+            return
+        }
+        HapticFeedbackHelper.selection()
+        completionConfirmContext = CompletionConfirmContext(
+            target: .item(item),
+            isCurrentlyCompleted: store.isCompleted(item)
+        )
+    }
+
+    private func requestToggleSubTaskCompletion(_ sub: SubTask, in item: ScheduleItem) {
+        guard item.isCheckable else { return }
+        guard store.deviceRole == .child else {
+            _ = store.toggleSubTaskCompletion(sub, in: item)
+            return
+        }
+        let isParentVerified = store.isParentVerified(item)
+        let subVerified = store.isSubTaskParentVerified(sub)
+        if (isParentVerified || subVerified) && !store.isParentModeUnlocked {
+            performParentAction(
+                reason: "부모님이 확인한 세부 숙제예요.\n수정하려면 부모님 6자리 마스터 PIN을 입력해 주세요."
+            ) {
+                _ = store.toggleSubTaskCompletion(sub, in: item)
+            }
+            return
+        }
+        HapticFeedbackHelper.selection()
+        completionConfirmContext = CompletionConfirmContext(
+            target: .subTask(sub, parent: item),
+            isCurrentlyCompleted: store.isSubTaskCompleted(sub)
+        )
+    }
+
+    private func executeConfirmedCompletion(_ context: CompletionConfirmContext) {
+        completionConfirmContext = nil
+        switch context.target {
+        case .item(let item):
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                _ = store.toggleCompletion(for: item)
+            }
+        case .subTask(let sub, let parent):
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                _ = store.toggleSubTaskCompletion(sub, in: parent)
+            }
+        }
+        HapticFeedbackHelper.success()
     }
 
     private func performParentAction(reason: String, action: @escaping () -> Void) {
@@ -708,10 +802,59 @@ struct TodayScheduleView: View {
     }
 }
 
+// MARK: - Completion Double-Check Context
+private struct CompletionConfirmContext: Identifiable {
+    enum Target {
+        case item(ScheduleItem)
+        case subTask(SubTask, parent: ScheduleItem)
+    }
+
+    let id = UUID()
+    let target: Target
+    let isCurrentlyCompleted: Bool
+
+    var titleText: String {
+        switch target {
+        case .item:
+            return isCurrentlyCompleted ? "완료 체크 해제 확인" : "일정 완료 체크 확인"
+        case .subTask:
+            return isCurrentlyCompleted ? "세부 항목 체크 해제 확인" : "세부 항목 완료 확인"
+        }
+    }
+
+    var messageText: String {
+        switch target {
+        case .item(let item):
+            if isCurrentlyCompleted {
+                if !item.subTasks.isEmpty {
+                    return "[\(item.title)] (\(item.timeRangeString)) 완료 체크를 해제할까요?\n포함된 세부 항목(\(item.subTasks.count)개)도 함께 미완료 상태로 변경됩니다."
+                }
+                return "[\(item.title)] (\(item.timeRangeString)) 완료 체크를 해제할까요?"
+            } else {
+                if !item.subTasks.isEmpty {
+                    return "[\(item.title)] (\(item.timeRangeString)) 일정을 완료했나요?\n확인하면 포함된 세부 항목(\(item.subTasks.count)개)도 함께 완료 체크됩니다."
+                }
+                return "[\(item.title)] (\(item.timeRangeString)) 일정을 완료했나요?\n체크하면 부모님께 완료 상태가 표시됩니다."
+            }
+        case .subTask(let sub, let parent):
+            if isCurrentlyCompleted {
+                return "[\(parent.title)]의 세부 항목 '\(sub.title)' 완료 체크를 해제할까요?"
+            } else {
+                return "[\(parent.title)]의 세부 항목 '\(sub.title)'을(를) 완료했나요?"
+            }
+        }
+    }
+
+    var confirmButtonTitle: String {
+        isCurrentlyCompleted ? "체크 해제" : "완료 체크하기"
+    }
+}
+
 // MARK: - Live Status Hero Card
 struct LiveStatusHeroCard: View {
     @EnvironmentObject var store: ScheduleStore
     var onTapItem: (ScheduleItem) -> Void
+    var onRequestToggleCompletion: (ScheduleItem) -> Void
     var onRequestParentAuth: (String, @escaping () -> Void) -> Void
     var onTapRewardExchange: () -> Void
     var onTapStarShop: () -> Void = {}
@@ -933,9 +1076,7 @@ struct LiveStatusHeroCard: View {
                                     // 아이 완료 버튼 (아이 폰에서만 직접 체크 가능)
                                     if !isVerified {
                                         Button {
-                                            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                                _ = store.toggleCompletion(for: current)
-                                            }
+                                            onRequestToggleCompletion(current)
                                         } label: {
                                             HStack(spacing: 4) {
                                                 Image(systemName: isChildDone ? "checkmark.circle.fill" : "circle")
@@ -1273,6 +1414,8 @@ struct ScheduleTimelineRow: View {
     let item: ScheduleItem
     let onTapEdit: () -> Void
     let onTapEditMaster: () -> Void
+    let onRequestToggleCompletion: (ScheduleItem) -> Void
+    let onRequestToggleSubTaskCompletion: (SubTask, ScheduleItem) -> Void
     let onRequestParentAuth: (String, @escaping () -> Void) -> Void
     let onTapSendHeart: (ScheduleItem) -> Void
 
@@ -1312,19 +1455,9 @@ struct ScheduleTimelineRow: View {
                 HStack(alignment: .top, spacing: 10) {
                     if item.isCheckable {
                         if store.deviceRole == .child {
-                            // 1단계: 아이 완료 체크박스 버튼 (아이 폰에서만 직접 체크 가능)
+                            // 1단계: 아이 완료 체크박스 버튼 (아이 폰에서만 직접 체크 가능 - 2중 확인 창 표시)
                             Button {
-                                if isParentVerified && !store.isParentModeUnlocked {
-                                    onRequestParentAuth(
-                                        "이미 부모님이 확인 완료한 숙제예요.\n체크를 해제하려면 부모님 6자리 마스터 PIN을 입력해 주세요."
-                                    ) {
-                                        _ = store.toggleCompletion(for: item)
-                                    }
-                                } else {
-                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.65)) {
-                                        _ = store.toggleCompletion(for: item)
-                                    }
-                                }
+                                onRequestToggleCompletion(item)
                             } label: {
                                 Image(
                                     systemName: isParentVerified
@@ -1562,19 +1695,9 @@ struct ScheduleTimelineRow: View {
 
                                 HStack(spacing: 8) {
                                     if store.deviceRole == .child {
-                                        // 아이 세부 할 일 체크 버튼 (아이 폰에서만 직접 체크 가능)
+                                        // 아이 세부 할 일 체크 버튼 (아이 폰에서만 직접 체크 가능 - 2중 확인 창 표시)
                                         Button {
-                                            if (isParentVerified || subVerified) && !store.isParentModeUnlocked {
-                                                onRequestParentAuth(
-                                                    "부모님이 확인한 세부 숙제예요.\n수정하려면 부모님 6자리 마스터 PIN을 입력해 주세요."
-                                                ) {
-                                                    _ = store.toggleSubTaskCompletion(sub, in: item)
-                                                }
-                                            } else {
-                                                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
-                                                    _ = store.toggleSubTaskCompletion(sub, in: item)
-                                                }
-                                            }
+                                            onRequestToggleSubTaskCompletion(sub, item)
                                         } label: {
                                             HStack(spacing: 8) {
                                                 Image(systemName: subDone ? "checkmark.square.fill" : "square")
@@ -1759,9 +1882,7 @@ struct ScheduleTimelineRow: View {
             } else {
                 if store.deviceRole == .child {
                     Button {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                            _ = store.toggleCompletion(for: item)
-                        }
+                        onRequestToggleCompletion(item)
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "circle")

@@ -49,8 +49,15 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
     expect(checkBtn).toBeInTheDocument();
     expect(checkBtn).toHaveAttribute('aria-checked', 'false');
 
-    // Click to complete
+    // Click to complete -> opens double-confirmation dialog first
     fireEvent.click(checkBtn);
+    expect(screen.getByTestId('completion-confirm-dialog')).toBeInTheDocument();
+    expect(mockPlayChime).not.toHaveBeenCalled();
+    expect(store.isCompleted(checkableItem)).toBe(false);
+
+    // Confirm completion
+    fireEvent.click(screen.getByTestId('confirm-completion-btn'));
+    expect(screen.queryByTestId('completion-confirm-dialog')).not.toBeInTheDocument();
 
     // Chime sound must be played
     expect(mockPlayChime).toHaveBeenCalledTimes(1);
@@ -84,8 +91,12 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
     expect(subCheckBtn).toBeInTheDocument();
     expect(subCheckBtn).toHaveAttribute('aria-checked', 'false');
 
-    // Click subtask checkbox
+    // Click subtask checkbox -> confirm dialog
     fireEvent.click(subCheckBtn);
+    expect(screen.getByTestId('completion-confirm-dialog')).toBeInTheDocument();
+    expect(mockPlayChime).not.toHaveBeenCalled();
+    expect(store.isSubTaskCompleted(sub1)).toBe(false);
+    fireEvent.click(screen.getByTestId('confirm-completion-btn'));
 
     expect(mockPlayChime).toHaveBeenCalledTimes(1);
     expect(store.isSubTaskCompleted(sub1)).toBe(true);
@@ -116,6 +127,9 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
 
     // Child attempts to click/uncheck verified item
     fireEvent.click(checkBtn);
+
+    // Confirmation dialog must NOT open when blocked by parent verification
+    expect(screen.queryByTestId('completion-confirm-dialog')).not.toBeInTheDocument();
 
     // Chime sound must NOT be played on rejected click
     expect(mockPlayChime).not.toHaveBeenCalled();
@@ -476,6 +490,7 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       // Complete item on Saturday
       const checkBtn = screen.getByTestId(`item-check-btn-${satCheckable.id}`);
       fireEvent.click(checkBtn);
+      fireEvent.click(screen.getByTestId('confirm-completion-btn'));
       expect(store.isCompleted(satCheckable)).toBe(true);
       expect(mockPlayChime).toHaveBeenCalledTimes(1);
 
@@ -552,6 +567,8 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       expect(store.getSelectedWeekday()).toBe(4);
       const thuCheckable = store.getItemsForWeekday(4).find((it) => store.isItemCheckable(it))!;
       fireEvent.click(screen.getByTestId(`item-check-btn-${thuCheckable.id}`));
+      fireEvent.click(screen.getByTestId('confirm-completion-btn'));
+      expect(store.isCompleted(thuCheckable)).toBe(true);
 
       // Hero card MUST still show Monday (actual today) date, percentage, completed/verified counts, and slogan
       expect(heroCard).toHaveTextContent('11월 9일 월요일');
@@ -795,7 +812,9 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       const [waitItem1, waitItem2] = wedCheckables;
 
       fireEvent.click(screen.getByTestId(`item-check-btn-${waitItem1.id}`));
+      fireEvent.click(screen.getByTestId('confirm-completion-btn'));
       fireEvent.click(screen.getByTestId(`item-check-btn-${waitItem2.id}`));
+      fireEvent.click(screen.getByTestId('confirm-completion-btn'));
 
       const wedStatsAfterCheck = store.getCompletionStats(3);
       expect(screen.getByTestId('selected-day-completed-stat')).toHaveTextContent(
@@ -1273,6 +1292,133 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       enterValidPin();
       expect(mockOpenEdit).toHaveBeenCalledTimes(3);
       expect(mockOpenEdit).toHaveBeenLastCalledWith(null, 3, 'thisWeek');
+    });
+  });
+
+  describe('Double-Confirmation Dialog for Completion Check/Uncheck', () => {
+    it('cancels item completion when clicking cancel or pressing Escape without changing state or playing chime', () => {
+      const todayItems = store.getTodayItems();
+      const itemWithSubs = todayItems.find((i) => store.isItemCheckable(i) && i.subTasks.length > 0)!;
+      expect(itemWithSubs).toBeDefined();
+
+      render(
+        <TodayScheduleView
+          items={todayItems}
+          weekdayName="월요일"
+          store={store}
+          onPlayChime={mockPlayChime}
+        />
+      );
+
+      const checkBtn = screen.getByTestId(`item-check-btn-${itemWithSubs.id}`);
+      fireEvent.click(checkBtn);
+
+      const dialog = screen.getByTestId('completion-confirm-dialog');
+      expect(dialog).toBeInTheDocument();
+      expect(dialog).toHaveTextContent('일정 완료 체크 확인');
+      expect(dialog).toHaveTextContent(itemWithSubs.title);
+      expect(dialog).toHaveTextContent(`세부 항목(${itemWithSubs.subTasks.length}개)도 함께 완료 체크됩니다`);
+      expect(store.isCompleted(itemWithSubs)).toBe(false);
+      expect(mockPlayChime).not.toHaveBeenCalled();
+
+      // Cancel via button
+      fireEvent.click(screen.getByTestId('cancel-completion-btn'));
+      expect(screen.queryByTestId('completion-confirm-dialog')).not.toBeInTheDocument();
+      expect(store.isCompleted(itemWithSubs)).toBe(false);
+      expect(mockPlayChime).not.toHaveBeenCalled();
+
+      // Open again and close via Escape key
+      fireEvent.click(checkBtn);
+      expect(screen.getByTestId('completion-confirm-dialog')).toBeInTheDocument();
+      fireEvent.keyDown(window, { key: 'Escape' });
+      expect(screen.queryByTestId('completion-confirm-dialog')).not.toBeInTheDocument();
+      expect(store.isCompleted(itemWithSubs)).toBe(false);
+      expect(mockPlayChime).not.toHaveBeenCalled();
+    });
+
+    it('prompts for confirmation before unchecking a completed item and does not play chime on uncheck', () => {
+      const todayItems = store.getTodayItems();
+      const checkableItem = todayItems.find((i) => store.isItemCheckable(i))!;
+      store.toggleCompletion(checkableItem);
+      expect(store.isCompleted(checkableItem)).toBe(true);
+
+      render(
+        <TodayScheduleView
+          items={todayItems}
+          weekdayName="월요일"
+          store={store}
+          onPlayChime={mockPlayChime}
+        />
+      );
+
+      const checkBtn = screen.getByTestId(`item-check-btn-${checkableItem.id}`);
+      fireEvent.click(checkBtn);
+
+      const dialog = screen.getByTestId('completion-confirm-dialog');
+      expect(dialog).toHaveTextContent('완료 체크 해제 확인');
+      expect(screen.getByTestId('confirm-completion-btn')).toHaveTextContent('체크 해제');
+
+      // Cancel keeps item completed
+      fireEvent.click(screen.getByTestId('cancel-completion-btn'));
+      expect(store.isCompleted(checkableItem)).toBe(true);
+
+      // Confirm unchecks item without playing chime
+      fireEvent.click(checkBtn);
+      fireEvent.click(screen.getByTestId('confirm-completion-btn'));
+      expect(store.isCompleted(checkableItem)).toBe(false);
+      expect(mockPlayChime).not.toHaveBeenCalled();
+    });
+
+    it('prompts for confirmation on subtask check/uncheck and protects parent-verified subtasks', () => {
+      const todayItems = store.getTodayItems();
+      const itemWithSubtasks = todayItems.find((i) => i.subTasks.length >= 2)!;
+      const [sub1, sub2] = itemWithSubtasks.subTasks;
+
+      render(
+        <TodayScheduleView
+          items={todayItems}
+          weekdayName="월요일"
+          store={store}
+          onPlayChime={mockPlayChime}
+        />
+      );
+
+      const sub1Btn = screen.getByTestId(`subtask-check-btn-${sub1.id}`);
+      fireEvent.click(sub1Btn);
+
+      let dialog = screen.getByTestId('completion-confirm-dialog');
+      expect(dialog).toHaveTextContent('세부 항목 완료 확인');
+      expect(dialog).toHaveTextContent(sub1.title);
+
+      // Cancel preserves incomplete state
+      fireEvent.click(screen.getByTestId('cancel-completion-btn'));
+      expect(store.isSubTaskCompleted(sub1)).toBe(false);
+      expect(mockPlayChime).not.toHaveBeenCalled();
+
+      // Confirm completes subtask and plays chime
+      fireEvent.click(sub1Btn);
+      fireEvent.click(screen.getByTestId('confirm-completion-btn'));
+      expect(store.isSubTaskCompleted(sub1)).toBe(true);
+      expect(mockPlayChime).toHaveBeenCalledTimes(1);
+
+      // Click completed subtask -> uncheck confirmation
+      fireEvent.click(sub1Btn);
+      dialog = screen.getByTestId('completion-confirm-dialog');
+      expect(dialog).toHaveTextContent('세부 항목 체크 해제 확인');
+      fireEvent.click(screen.getByTestId('confirm-completion-btn'));
+      expect(store.isSubTaskCompleted(sub1)).toBe(false);
+      expect(mockPlayChime).toHaveBeenCalledTimes(1);
+
+      // Parent-verified subtask shows notice directly without opening confirmation dialog
+      act(() => {
+        store.toggleSubTaskCompletion(sub2, itemWithSubtasks);
+        store.setParentVerifiedSubTask(sub2.id, true);
+      });
+      const sub2Btn = screen.getByTestId(`subtask-check-btn-${sub2.id}`);
+      fireEvent.click(sub2Btn);
+      expect(screen.queryByTestId('completion-confirm-dialog')).not.toBeInTheDocument();
+      expect(screen.getByTestId('parent-verified-notice')).toBeInTheDocument();
+      expect(store.isSubTaskCompleted(sub2)).toBe(true);
     });
   });
 });
