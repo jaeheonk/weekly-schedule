@@ -1420,5 +1420,37 @@ describe('TodayScheduleView Child Mode Checklist & Progress (Seam 3)', () => {
       expect(screen.getByTestId('parent-verified-notice')).toBeInTheDocument();
       expect(store.isSubTaskCompleted(sub2)).toBe(true);
     });
+
+    it('부모 모드에서도 메인 일정과 세부 할 일 완료 체크를 2중 확인 창을 거쳐 토글할 수 있다', () => {
+      act(() => {
+        store.unlockParentMode();
+      });
+      const todayItems = store.getTodayItems();
+      const itemWithSubtasks = todayItems.find((it) => store.isItemCheckable(it) && it.subTasks.length >= 2);
+      expect(itemWithSubtasks).toBeDefined();
+      if (!itemWithSubtasks) return;
+      const [sub1] = itemWithSubtasks.subTasks;
+
+      render(
+        <TodayScheduleView
+          items={todayItems}
+          weekdayName="월요일"
+          store={store}
+          onPlayChime={mockPlayChime}
+        />
+      );
+
+      const sub1Btn = screen.getByTestId(`subtask-check-btn-${sub1.id}`);
+      fireEvent.click(sub1Btn);
+      expect(screen.getByTestId('completion-confirm-dialog')).toHaveTextContent('세부 항목 완료 확인');
+      fireEvent.click(screen.getByTestId('confirm-completion-btn'));
+      expect(store.isSubTaskCompleted(sub1)).toBe(true);
+
+      const mainBtn = screen.getByTestId(`item-check-btn-${itemWithSubtasks.id}`);
+      fireEvent.click(mainBtn);
+      expect(screen.getByTestId('completion-confirm-dialog')).toHaveTextContent('일정 완료 체크 확인');
+      fireEvent.click(screen.getByTestId('confirm-completion-btn'));
+      expect(store.isCompleted(itemWithSubtasks)).toBe(true);
+    });
   });
 });

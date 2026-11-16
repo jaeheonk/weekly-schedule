@@ -346,6 +346,41 @@ func testInFlightMutationDuringUploadIsNotDropped() async {
     print("✅ Scenario 4 passed!")
 }
 
+@MainActor
+func testParentPhoneCompletionWithoutUnlockAndSyncsToChild() async {
+    print("Running Scenario 5: Parent phone completion works without parent unlock and syncs to child...")
+    let transport = InMemoryCloudSyncTransport()
+    let parentStore = makeIsolatedStore(role: .parent, transport: transport)
+    let childStore = makeIsolatedStore(role: .child, transport: transport)
+
+    guard let checkableItem = parentStore.items.first(where: { $0.isCheckable && !$0.subTasks.isEmpty })
+        ?? parentStore.items.first(where: { $0.isCheckable }) else {
+        assertTrue(false, "Expected at least one checkable schedule item")
+        return
+    }
+
+    parentStore.lockParentMode()
+    assertEqual(parentStore.isParentModeUnlocked, false, "Parent phone starts locked")
+    assertEqual(parentStore.toggleCompletion(for: checkableItem), true, "Parent phone can toggle completion without unlock")
+    assertEqual(parentStore.isCompleted(checkableItem), true)
+
+    if let firstSub = checkableItem.subTasks.first {
+        assertEqual(
+            parentStore.toggleSubTaskCompletion(firstSub, in: checkableItem),
+            true,
+            "Parent phone can toggle subtask completion without unlock"
+        )
+        assertEqual(parentStore.isSubTaskCompleted(firstSub), false, "Toggling completed subtask should uncheck it")
+        assertEqual(parentStore.isCompleted(checkableItem), false, "Parent item should uncheck when subtask is unchecked")
+        assertEqual(parentStore.toggleSubTaskCompletion(firstSub, in: checkableItem), true)
+    }
+
+    await parentStore.flushPendingPush()
+    await childStore.syncNow(forceUploadIfEmpty: false)
+    assertEqual(childStore.isCompleted(checkableItem), true, "Child phone should receive parent's completion check")
+    print("✅ Scenario 5 passed!")
+}
+
 @main
 struct CloudSyncDesyncTestRunner {
     static func main() async {
@@ -354,6 +389,7 @@ struct CloudSyncDesyncTestRunner {
         await testRedemptionArchiveBeyondFiftyPreservesSpentHearts()
         await testPreExistingStrandedUserDefaultsHealsWithoutPendingFlagAndConvergesWithoutPingPong()
         await testInFlightMutationDuringUploadIsNotDropped()
+        await testParentPhoneCompletionWithoutUnlockAndSyncsToChild()
         print("🎉 ALL CloudSyncDesyncTests PASSED!")
     }
 }

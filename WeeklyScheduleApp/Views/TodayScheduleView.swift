@@ -343,46 +343,46 @@ struct TodayScheduleView: View {
 
     private func requestToggleCompletion(for item: ScheduleItem) {
         guard item.isCheckable else { return }
-        guard store.deviceRole == .child else {
-            _ = store.toggleCompletion(for: item)
-            return
-        }
-        let isParentVerified = store.isParentVerified(item)
-        if isParentVerified && !store.isParentModeUnlocked {
-            performParentAction(
-                reason: "이미 부모님이 확인 완료한 숙제예요.\n체크를 해제하려면 부모님 6자리 마스터 PIN을 입력해 주세요."
-            ) {
-                _ = store.toggleCompletion(for: item)
-            }
-            return
-        }
-        HapticFeedbackHelper.selection()
-        completionConfirmContext = CompletionConfirmContext(
+        requestAuthenticatedCompletion(
             target: .item(item),
-            isCurrentlyCompleted: store.isCompleted(item)
-        )
+            isCurrentlyCompleted: store.isCompleted(item),
+            isParentVerified: store.isParentVerified(item),
+            authReason: "이미 부모님이 확인 완료한 숙제예요.\n체크를 해제하려면 부모 인증을 해주세요."
+        ) {
+            _ = store.toggleCompletion(for: item)
+        }
     }
 
     private func requestToggleSubTaskCompletion(_ sub: SubTask, in item: ScheduleItem) {
         guard item.isCheckable else { return }
-        guard store.deviceRole == .child else {
+        let isVerified = store.isParentVerified(item) || store.isSubTaskParentVerified(sub)
+        requestAuthenticatedCompletion(
+            target: .subTask(sub, parent: item),
+            isCurrentlyCompleted: store.isSubTaskCompleted(sub),
+            isParentVerified: isVerified,
+            authReason: "부모님이 확인한 세부 숙제예요.\n수정하려면 부모 인증을 해주세요."
+        ) {
             _ = store.toggleSubTaskCompletion(sub, in: item)
-            return
         }
-        let isParentVerified = store.isParentVerified(item)
-        let subVerified = store.isSubTaskParentVerified(sub)
-        if (isParentVerified || subVerified) && !store.isParentModeUnlocked {
-            performParentAction(
-                reason: "부모님이 확인한 세부 숙제예요.\n수정하려면 부모님 6자리 마스터 PIN을 입력해 주세요."
-            ) {
-                _ = store.toggleSubTaskCompletion(sub, in: item)
+    }
+
+    private func requestAuthenticatedCompletion(
+        target: CompletionConfirmContext.Target,
+        isCurrentlyCompleted: Bool,
+        isParentVerified: Bool,
+        authReason: String,
+        verifiedAction: @escaping () -> Void
+    ) {
+        if isParentVerified && !store.isParentModeUnlocked {
+            performParentAction(reason: authReason) {
+                verifiedAction()
             }
             return
         }
         HapticFeedbackHelper.selection()
         completionConfirmContext = CompletionConfirmContext(
-            target: .subTask(sub, parent: item),
-            isCurrentlyCompleted: store.isSubTaskCompleted(sub)
+            target: target,
+            isCurrentlyCompleted: isCurrentlyCompleted
         )
     }
 
@@ -1454,47 +1454,25 @@ struct ScheduleTimelineRow: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 10) {
                     if item.isCheckable {
-                        if store.deviceRole == .child {
-                            // 1단계: 아이 완료 체크박스 버튼 (아이 폰에서만 직접 체크 가능 - 2중 확인 창 표시)
-                            Button {
-                                onRequestToggleCompletion(item)
-                            } label: {
-                                Image(
-                                    systemName: isParentVerified
-                                        ? "checkmark.seal.fill"
-                                        : (isCompleted ? "checkmark.circle.fill" : "circle")
-                                )
-                                .font(.system(size: 26, weight: .semibold))
-                                .foregroundStyle(
-                                    isParentVerified
-                                        ? Color.green
-                                        : (isCompleted ? Color.blue : item.category.color)
-                                )
-                                .contentTransition(.symbolEffect(.replace))
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.top, 2)
-                        } else {
-                            // 부모 폰: 체크리스트는 아이만 체크 가능 (부모는 현황 확인 및 안내 토스트)
-                            Button {
-                                store.showToast("체크리스트는 아이 폰에서만 직접 체크할 수 있어요 😊")
-                            } label: {
-                                Image(
-                                    systemName: isParentVerified
-                                        ? "checkmark.seal.fill"
-                                        : (isCompleted ? "checkmark.circle.fill" : "circle.dashed")
-                                )
-                                .font(.system(size: 26, weight: .semibold))
-                                .foregroundStyle(
-                                    isParentVerified
-                                        ? Color.green
-                                        : (isCompleted ? Color.blue : Color.secondary.opacity(0.55))
-                                )
-                                .contentTransition(.symbolEffect(.replace))
-                            }
-                            .buttonStyle(.plain)
-                            .padding(.top, 2)
+                        // 1단계: 완료 체크박스 버튼 (아이 폰 및 부모 인증 후 부모님 폰에서 체크 가능 - 2중 확인 창 표시)
+                        Button {
+                            onRequestToggleCompletion(item)
+                        } label: {
+                            Image(
+                                systemName: isParentVerified
+                                    ? "checkmark.seal.fill"
+                                    : (isCompleted ? "checkmark.circle.fill" : "circle")
+                            )
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundStyle(
+                                isParentVerified
+                                    ? Color.green
+                                    : (isCompleted ? Color.blue : item.category.color)
+                            )
+                            .contentTransition(.symbolEffect(.replace))
                         }
+                        .buttonStyle(.plain)
+                        .padding(.top, 2)
                     } else {
                         // 생활·습관 및 자유·여가 등 체크 제외 항목은 체크박스 대신 아이콘 배지로 일정만 표시
                         ZStack {
@@ -1694,45 +1672,24 @@ struct ScheduleTimelineRow: View {
                                 let subVerified = store.isSubTaskParentVerified(sub)
 
                                 HStack(spacing: 8) {
-                                    if store.deviceRole == .child {
-                                        // 아이 세부 할 일 체크 버튼 (아이 폰에서만 직접 체크 가능 - 2중 확인 창 표시)
-                                        Button {
-                                            onRequestToggleSubTaskCompletion(sub, item)
-                                        } label: {
-                                            HStack(spacing: 8) {
-                                                Image(systemName: subDone ? "checkmark.square.fill" : "square")
-                                                    .font(.subheadline.weight(.semibold))
-                                                    .foregroundStyle(
-                                                        subVerified ? .green : (subDone ? .blue : item.category.color)
-                                                    )
-                                                Text(sub.title)
-                                                    .font(.footnote.weight(.medium))
-                                                    .foregroundStyle(subDone ? .secondary : .primary)
-                                                    .strikethrough(subDone, color: .secondary)
-                                                Spacer()
-                                            }
+                                    // 세부 할 일 체크 버튼 (아이 폰 및 부모 인증 후 부모님 폰에서 체크 가능 - 2중 확인 창 표시)
+                                    Button {
+                                        onRequestToggleSubTaskCompletion(sub, item)
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: subDone ? "checkmark.square.fill" : "square")
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(
+                                                    subVerified ? .green : (subDone ? .blue : item.category.color)
+                                                )
+                                            Text(sub.title)
+                                                .font(.footnote.weight(.medium))
+                                                .foregroundStyle(subDone ? .secondary : .primary)
+                                                .strikethrough(subDone, color: .secondary)
+                                            Spacer()
                                         }
-                                        .buttonStyle(.plain)
-                                    } else {
-                                        // 부모 폰에서는 읽기 전용 (탭 시 안내)
-                                        Button {
-                                            store.showToast("세부 할 일은 아이 폰에서만 직접 체크할 수 있어요 😊")
-                                        } label: {
-                                            HStack(spacing: 8) {
-                                                Image(systemName: subDone ? "checkmark.square.fill" : "square.dashed")
-                                                    .font(.subheadline.weight(.semibold))
-                                                    .foregroundStyle(
-                                                        subVerified ? .green : (subDone ? .blue : Color.secondary.opacity(0.55))
-                                                    )
-                                                Text(sub.title)
-                                                    .font(.footnote.weight(.medium))
-                                                    .foregroundStyle(subDone ? .secondary : .primary)
-                                                    .strikethrough(subDone, color: .secondary)
-                                                Spacer()
-                                            }
-                                        }
-                                        .buttonStyle(.plain)
                                     }
+                                    .buttonStyle(.plain)
 
                                     // 어른 세부 항목 확인 배지/버튼
                                     Button {
@@ -1880,27 +1837,17 @@ struct ScheduleTimelineRow: View {
                 }
                 .font(.caption)
             } else {
-                if store.deviceRole == .child {
-                    Button {
-                        onRequestToggleCompletion(item)
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "circle")
-                            Text("다 했어요 체크!")
-                        }
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                } else {
+                Button {
+                    onRequestToggleCompletion(item)
+                } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "clock")
-                            .foregroundStyle(.secondary)
-                        Text("아이 완료 대기 중")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
+                        Image(systemName: "circle")
+                        Text("다 했어요 체크!")
                     }
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
             }
 
             Spacer()

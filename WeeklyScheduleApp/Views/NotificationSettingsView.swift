@@ -406,7 +406,7 @@ struct NotificationSettingsView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "info.circle.fill")
                                 .foregroundStyle(.indigo)
-                            Text("시간표 시계 알람과 체크리스트는 아이 폰에서만 작동합니다. 아래 목록에서 아이 폰에 적용될 스케줄을 확인하거나 변경할 수 있습니다.")
+                            Text("시간표 시계 알람은 아이 폰에서만 작동합니다. 아래 목록에서 아이 폰에 적용될 스케줄을 확인하거나 변경할 수 있으며, 완료 체크는 부모님 폰에서도 바로 가능합니다.")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }

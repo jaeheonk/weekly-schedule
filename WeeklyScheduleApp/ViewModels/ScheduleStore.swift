@@ -705,14 +705,10 @@ final class ScheduleStore: ObservableObject {
         parentVerifiedSubTaskKeys.contains(subTaskKey(for: subTask.id, weekKey: weekKey))
     }
 
-    /// 아이의 '다 했어요' 완료 토글 (체크리스트는 아이만 체크 가능)
+    /// '다 했어요' 완료 토글 (아이 폰 및 부모님 폰 모두 체크 가능)
     @discardableResult
     func toggleCompletion(for item: ScheduleItem) -> Bool {
         guard item.isCheckable else { return false }
-        guard deviceRole == .child else {
-            showToast("체크리스트는 아이 폰에서만 완료 체크할 수 있어요 😊")
-            return false
-        }
         let key = itemKey(for: item.id)
         let ts = Date().timeIntervalSince1970
 
@@ -750,14 +746,10 @@ final class ScheduleStore: ObservableObject {
         return true
     }
 
-    /// 아이의 세부 할 일(SubTask) 완료 토글 (체크리스트는 아이만 체크 가능)
+    /// 세부 할 일(SubTask) 완료 토글 (아이 폰 및 부모님 폰 모두 체크 가능)
     @discardableResult
     func toggleSubTaskCompletion(_ subTask: SubTask, in parentItem: ScheduleItem) -> Bool {
         guard parentItem.isCheckable else { return false }
-        guard deviceRole == .child else {
-            showToast("세부 할 일은 아이 폰에서만 체크할 수 있어요 😊")
-            return false
-        }
         let pKey = itemKey(for: parentItem.id)
         let sKey = subTaskKey(for: subTask.id)
         let ts = Date().timeIntervalSince1970
