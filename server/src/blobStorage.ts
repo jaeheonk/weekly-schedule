@@ -12,6 +12,17 @@ export function sanitizeFamilyCode(raw?: string): string {
   return trimmed.replace(/[^a-z0-9_-]/g, '');
 }
 
+// 정리 요청은 같은 가족의 스냅샷 경로만 지운다. 같은 Blob 스토어의 다른 데이터를
+// 클라이언트가 보낸 URL로 지우지 못하게 막는다.
+export function isFamilySnapshotUrl(rawUrl: string, safeFamily: string): boolean {
+  try {
+    const pathname = decodeURIComponent(new URL(rawUrl).pathname).replace(/^\/+/, '');
+    return pathname.startsWith(`families/${safeFamily}/state-`) && !pathname.includes('..');
+  } catch {
+    return false;
+  }
+}
+
 export class VercelBlobStorage implements BlobStorage {
   private token: string;
 
@@ -87,16 +98,19 @@ export class VercelBlobStorage implements BlobStorage {
       contentType: 'application/json',
     });
 
-    // Fire-and-forget 비동기 정리
+    // 이전 스냅샷 정리. 서버리스(Vercel Functions)에서는 응답 뒤에 남은 작업이
+    // 끊길 수 있어 응답 전에 기다린다. 정리 실패는 업로드 실패로 보지 않는다.
     const previous = payload.previousBlobsToDelete || [];
     const urlsToDelete = previous
       .map((b) => b.url)
-      .filter((u) => u && u !== putResult.url);
+      .filter((u) => u && u !== putResult.url && isFamilySnapshotUrl(u, safeFamily));
 
     if (urlsToDelete.length > 0) {
-      del(urlsToDelete, { token: this.token }).catch((err) => {
-        console.warn('[VercelBlobStorage] Background cleanup failed:', err);
-      });
+      try {
+        await del(urlsToDelete, { token: this.token });
+      } catch (err) {
+        console.warn('[VercelBlobStorage] Cleanup failed:', err);
+      }
     }
 
     return {

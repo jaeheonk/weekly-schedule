@@ -127,7 +127,7 @@ describe('BlobStorage Seam 2: VercelBlobStorage & helpers', () => {
       ).rejects.toThrow(/familyCode/);
     });
 
-    it('uploads with private mode and cleans up previous blobs asynchronously', async () => {
+    it('uploads with private mode and cleans up previous blobs before responding', async () => {
       vi.mocked(blobSdk.put).mockResolvedValueOnce({
         url: 'https://blob.vercel-storage.com/families/test-fam/state-new.json',
         downloadUrl: 'https://blob.vercel-storage.com/families/test-fam/state-new.json?download=1',
@@ -175,6 +175,35 @@ describe('BlobStorage Seam 2: VercelBlobStorage & helpers', () => {
           'https://blob.vercel-storage.com/families/test-fam/state-old1.json',
           'https://blob.vercel-storage.com/families/test-fam/state-old2.json',
         ],
+        { token: 'test-token-123' }
+      );
+    });
+    it('only deletes previous snapshots of the same family and tolerates cleanup failure', async () => {
+      vi.mocked(blobSdk.put).mockResolvedValueOnce({
+        url: 'https://store.private.blob.vercel-storage.com/families/fam-a/state-new.json',
+        downloadUrl: 'https://store.private.blob.vercel-storage.com/families/fam-a/state-new.json?download=1',
+        pathname: 'families/fam-a/state-new.json',
+        contentType: 'application/json',
+        contentDisposition: '',
+        etag: 'mock-etag-2',
+      });
+      vi.mocked(blobSdk.del).mockRejectedValueOnce(new Error('boom'));
+
+      const storage = new VercelBlobStorage('test-token-123');
+      const res = await storage.uploadSnapshot({
+        familyCode: 'fam-a',
+        snapshot: { schemaVersion: 5 },
+        previousBlobsToDelete: [
+          { url: 'https://store.private.blob.vercel-storage.com/families/fam-a/state-old.json', pathname: '' },
+          { url: 'https://store.private.blob.vercel-storage.com/families/fam-b/state-old.json', pathname: '' },
+          { url: 'https://store.private.blob.vercel-storage.com/toonviewer-sync/x/head.json', pathname: '' },
+          { url: 'not a url', pathname: '' },
+        ],
+      });
+
+      expect(res.pathname).toBe('families/fam-a/state-new.json');
+      expect(blobSdk.del).toHaveBeenLastCalledWith(
+        ['https://store.private.blob.vercel-storage.com/families/fam-a/state-old.json'],
         { token: 'test-token-123' }
       );
     });
