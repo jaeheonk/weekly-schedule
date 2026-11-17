@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { createApp } from './app.js';
+import { resolveStorageFromEnv } from './storageFactory.js';
 
 const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
 const host = '0.0.0.0';
@@ -7,9 +8,9 @@ const app = createApp();
 
 const server = app.listen(port, host, () => {
   console.log(`[WeeklySchedule Server] Listening on http://${host}:${port}`);
-  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+  if (!resolveStorageFromEnv(process.env)) {
     console.warn(
-      '[WeeklySchedule Server] WARNING: BLOB_READ_WRITE_TOKEN is not set. /api/sync endpoints will return 500.'
+      '[WeeklySchedule Server] WARNING: sync storage is not configured (KV_REST_API_URL/KV_REST_API_TOKEN or UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN). /api/sync endpoints will return 500.'
     );
   }
 });

@@ -9,9 +9,11 @@
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
+    "migrate:blob-to-redis": "tsx scripts/migrate-blob-to-redis.ts"
   },
   "dependencies": {
+    "@upstash/redis": "^1.41.0",
     "@vercel/blob": "^2.8.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

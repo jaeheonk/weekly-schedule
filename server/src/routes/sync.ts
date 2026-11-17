@@ -1,9 +1,10 @@
 import { Request, Response, NextFunction, Router } from 'express';
-import { BlobStorage } from '../types.js';
+import { SyncStorage } from '../types.js';
+import { STORAGE_NOT_CONFIGURED_MESSAGE } from '../storageFactory.js';
 import { handleHealthCheck } from './health.js';
 
 export interface SyncRouteContext {
-  getStorage: () => BlobStorage | undefined;
+  getStorage: () => SyncStorage | undefined;
 }
 
 export function createSyncRouter(context: SyncRouteContext): Router {
@@ -14,8 +15,7 @@ export function createSyncRouter(context: SyncRouteContext): Router {
     const storage = context.getStorage();
     if (!storage) {
       res.status(500).json({
-        error:
-          '서버 환경 변수 BLOB_READ_WRITE_TOKEN이 설정되지 않아 클라우드 동기화를 처리할 수 없습니다.',
+        error: STORAGE_NOT_CONFIGURED_MESSAGE,
       });
       return;
     }
@@ -27,8 +27,7 @@ export function createSyncRouter(context: SyncRouteContext): Router {
       const storage = context.getStorage();
       if (!storage) {
         res.status(500).json({
-          error:
-            '서버 환경 변수 BLOB_READ_WRITE_TOKEN이 설정되지 않아 클라우드 동기화를 처리할 수 없습니다.',
+          error: STORAGE_NOT_CONFIGURED_MESSAGE,
         });
         return;
       }
@@ -54,8 +53,7 @@ export function createSyncRouter(context: SyncRouteContext): Router {
       const storage = context.getStorage();
       if (!storage) {
         res.status(500).json({
-          error:
-            '서버 환경 변수 BLOB_READ_WRITE_TOKEN이 설정되지 않아 클라우드 동기화를 처리할 수 없습니다.',
+          error: STORAGE_NOT_CONFIGURED_MESSAGE,
         });
         return;
       }
