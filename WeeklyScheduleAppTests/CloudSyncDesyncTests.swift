@@ -23,6 +23,8 @@ enum MockSyncError: LocalizedError {
 
 @MainActor
 final class InMemoryCloudSyncTransport: CloudSyncTransport {
+    let requiresServerURL: Bool = false
+
     private var blobs: [(item: VercelBlobItem, snapshot: CloudSyncSnapshot)] = []
     private var counter: Int64 = 1_794_740_000_000
 
@@ -30,13 +32,19 @@ final class InMemoryCloudSyncTransport: CloudSyncTransport {
     var shouldFailFetches = false
     var uploadDelayNanoseconds: UInt64 = 0
     var onBeforeUpload: (() async -> Void)?
+    private(set) var fetchCount: Int = 0
     private(set) var uploadCount: Int = 0
 
     func seed(snapshot: CloudSyncSnapshot, deviceId: String = "seed") {
         counter += 100
         let padded = String(format: "%014lld", counter)
         let pathname = "families/\(snapshot.familyCode)/state-\(padded)-\(deviceId).json"
-        let item = VercelBlobItem(url: "https://mock.blob/\(pathname)", pathname: pathname, size: 1024, uploadedAt: nil)
+        let item = VercelBlobItem(
+            url: "redis://ws:family:\(snapshot.familyCode):latest#\(pathname)",
+            pathname: pathname,
+            size: 1024,
+            uploadedAt: nil
+        )
         blobs = [(item: item, snapshot: snapshot)]
     }
 
@@ -44,23 +52,23 @@ final class InMemoryCloudSyncTransport: CloudSyncTransport {
         blobs.sorted { $0.item.pathname > $1.item.pathname }.first?.snapshot
     }
 
-    func fetchLatestBlobMetadata(token: String, familyCode: String) async throws -> (latest: VercelBlobItem?, allBlobs: [VercelBlobItem]) {
+    func fetchLatestSnapshot(
+        serverURL: String,
+        familyCode: String
+    ) async throws -> SyncLatestResponse {
+        fetchCount += 1
         if shouldFailFetches { throw MockSyncError.transientNetworkFailure }
-        let sorted = blobs.map { $0.item }.sorted { $0.pathname > $1.pathname }
-        return (sorted.first, sorted)
-    }
-
-    func downloadSnapshot(from blobURLString: String, token: String) async throws -> CloudSyncSnapshot {
-        if shouldFailFetches { throw MockSyncError.transientNetworkFailure }
-        guard let snapshot = blobs.first(where: { $0.item.url == blobURLString })?.snapshot else {
-            throw VercelBlobSyncError.invalidURL
-        }
-        return snapshot
+        let sorted = blobs.sorted { $0.item.pathname > $1.item.pathname }
+        return SyncLatestResponse(
+            latest: sorted.first?.item,
+            snapshot: sorted.first?.snapshot,
+            allBlobs: sorted.map { $0.item }
+        )
     }
 
     func uploadSnapshot(
         _ snapshot: CloudSyncSnapshot,
-        token: String,
+        serverURL: String,
         familyCode: String,
         shortDeviceId: String,
         previousBlobsToDelete: [VercelBlobItem]
@@ -80,22 +88,68 @@ final class InMemoryCloudSyncTransport: CloudSyncTransport {
         counter += 100
         let padded = String(format: "%014lld", counter)
         let pathname = "families/\(familyCode)/state-\(padded)-\(shortDeviceId).json"
-        let url = "https://mock.blob/\(pathname)"
+        let url = "redis://ws:family:\(familyCode):latest#\(pathname)"
         let item = VercelBlobItem(url: url, pathname: pathname, size: 2048, uploadedAt: nil)
 
-        let deleteUrls = Set(previousBlobsToDelete.map { $0.url })
-        blobs.removeAll { deleteUrls.contains($0.item.url) }
+        let deletePathnames = Set(previousBlobsToDelete.map { $0.pathname })
+        blobs.removeAll { deletePathnames.contains($0.item.pathname) }
         blobs.append((item: item, snapshot: snapshot))
 
         return VercelBlobPutResponse(url: url, pathname: pathname)
     }
 }
 
+// MARK: - Mock URLProtocol for HTTP Proxy Tests
+final class MockSyncURLProtocol: URLProtocol {
+    nonisolated(unsafe) static var handler: ((URLRequest, Data?) throws -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: MockSyncError.transientNetworkFailure)
+            return
+        }
+        let bodyData = request.httpBody ?? Self.readBodyStream(request.httpBodyStream)
+        do {
+            let (response, data) = try handler(request, bodyData)
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+
+    override func stopLoading() {}
+
+    private static func readBodyStream(_ stream: InputStream?) -> Data? {
+        guard let stream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let bufferSize = 4096
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
+        while stream.hasBytesAvailable {
+            let read = stream.read(buffer, maxLength: bufferSize)
+            if read > 0 {
+                data.append(buffer, count: read)
+            } else {
+                break
+            }
+        }
+        return data
+    }
+}
+
 @MainActor
 func makeIsolatedStore(
     role: DeviceRole,
-    transport: InMemoryCloudSyncTransport,
-    suiteSuffix: String = UUID().uuidString
+    transport: CloudSyncTransport,
+    suiteSuffix: String = UUID().uuidString,
+    syncPollingInterval: TimeInterval = ScheduleStore.foregroundSyncInterval
 ) -> ScheduleStore {
     let suiteName = "com.weeklyschedule.tests.\(suiteSuffix)"
     let defaults = UserDefaults(suiteName: suiteName)!
@@ -104,7 +158,8 @@ func makeIsolatedStore(
         userDefaults: defaults,
         syncTransport: transport,
         enableSystemSideEffects: false,
-        autoStartBackgroundTasks: false
+        autoStartBackgroundTasks: false,
+        syncPollingInterval: syncPollingInterval
     )
     store.setDeviceRole(role)
     return store
@@ -381,6 +436,275 @@ func testParentPhoneCompletionWithoutUnlockAndSyncsToChild() async {
     print("✅ Scenario 5 passed!")
 }
 
+@MainActor
+func testUpstashProxySyncServiceAndEmptyURLHandling() async {
+    print("Running Scenario 6: Vercel /api/sync Upstash proxy transport, empty server URL, and WidgetSharedState backward compatibility...")
+
+    // 1. URL normalization & error validation
+    assertEqual(
+        VercelBlobSyncService.normalizeServerURL("  https://weekly.vercel.app/api/sync/  "),
+        "https://weekly.vercel.app",
+        "Should strip trailing /api/sync and slashes"
+    )
+    assertEqual(VercelBlobSyncService.defaultServerURL, "https://weekly-schedule-six-seven.vercel.app", "Default server URL must point to weekly-schedule-six-seven.vercel.app")
+
+    let config = URLSessionConfiguration.ephemeral
+    config.protocolClasses = [MockSyncURLProtocol.self]
+    let mockSession = URLSession(configuration: config)
+    let service = VercelBlobSyncService(session: mockSession)
+
+    // Missing URL error
+    do {
+        _ = try await service.fetchLatestSnapshot(serverURL: "   ", familyCode: "family-main")
+        assertTrue(false, "Expected missingServerURL error")
+    } catch let error as VercelBlobSyncError {
+        if case .missingServerURL = error {} else {
+            assertTrue(false, "Expected missingServerURL, got \(error)")
+        }
+    } catch {
+        assertTrue(false, "Unexpected error: \(error)")
+    }
+
+    // Invalid URL error
+    do {
+        _ = try await service.fetchLatestSnapshot(serverURL: "not-a-valid-url", familyCode: "family-main")
+        assertTrue(false, "Expected invalidURL error")
+    } catch let error as VercelBlobSyncError {
+        if case .invalidURL = error {} else {
+            assertTrue(false, "Expected invalidURL, got \(error)")
+        }
+    } catch {
+        assertTrue(false, "Unexpected error: \(error)")
+    }
+
+    // 2. Single-round-trip /api/sync/latest and /api/sync/upload round-trip
+    let seededSnapshot = makeSeededSnapshot(earnedHearts: 42, redemptions: [])
+    var capturedPaths: [String] = []
+    MockSyncURLProtocol.handler = { request, bodyData in
+        let url = request.url!
+        capturedPaths.append("\(request.httpMethod ?? "") \(url.path)")
+
+        if url.path == "/api/sync/latest" {
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            let familyQuery = components?.queryItems?.first(where: { $0.name == "familyCode" })?.value
+            assertEqual(familyQuery, "my-family", "familyCode query param should be sanitized")
+
+            let blobItem = VercelBlobItem(
+                url: "redis://ws:family:my-family:latest#families/my-family/state-0001-seed.json",
+                pathname: "families/my-family/state-0001-seed.json",
+                size: 512,
+                uploadedAt: "2026-01-01T00:00:00.000Z"
+            )
+            let responsePayload = SyncLatestResponse(
+                latest: blobItem,
+                snapshot: seededSnapshot,
+                allBlobs: [blobItem]
+            )
+            let data = try JSONEncoder().encode(responsePayload)
+            let http = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (http, data)
+        } else if url.path == "/api/sync/upload" {
+            guard let bodyData,
+                  let json = try JSONSerialization.jsonObject(with: bodyData) as? [String: Any] else {
+                assertTrue(false, "Upload request must carry JSON body")
+                throw MockSyncError.transientNetworkFailure
+            }
+            assertEqual(json["familyCode"] as? String, "my-family")
+            assertEqual(json["shortDeviceId"] as? String, "dev123")
+            let putRes = VercelBlobPutResponse(
+                url: "redis://ws:family:my-family:latest#families/my-family/state-0002-dev123.json",
+                pathname: "families/my-family/state-0002-dev123.json"
+            )
+            let data = try JSONEncoder().encode(putRes)
+            let http = HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (http, data)
+        } else {
+            let errData = try JSONSerialization.data(withJSONObject: ["error": "Unexpected route"])
+            let http = HTTPURLResponse(url: url, statusCode: 404, httpVersion: nil, headerFields: nil)!
+            return (http, errData)
+        }
+    }
+
+    let latestRes = try! await service.fetchLatestSnapshot(
+        serverURL: "https://sync.example.com/api/sync/",
+        familyCode: "My-Family!"
+    )
+    assertEqual(latestRes.latest?.url, "redis://ws:family:my-family:latest#families/my-family/state-0001-seed.json")
+    assertEqual(latestRes.snapshot?.praiseNotes.first?.hearts, 42)
+
+    let uploadRes = try! await service.uploadSnapshot(
+        seededSnapshot,
+        serverURL: "https://sync.example.com",
+        familyCode: "My-Family!",
+        shortDeviceId: "dev123",
+        previousBlobsToDelete: latestRes.allBlobs
+    )
+    assertEqual(uploadRes.pathname, "families/my-family/state-0002-dev123.json")
+    assertEqual(capturedPaths, ["GET /api/sync/latest", "POST /api/sync/upload"])
+
+    // Server { "error": "..." } propagation
+    MockSyncURLProtocol.handler = { request, _ in
+        let errData = try JSONSerialization.data(withJSONObject: ["error": "Redis unavailable"])
+        let http = HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: nil)!
+        return (http, errData)
+    }
+    do {
+        _ = try await service.fetchLatestSnapshot(serverURL: "https://sync.example.com", familyCode: "family-main")
+        assertTrue(false, "Expected httpError")
+    } catch let error as VercelBlobSyncError {
+        if case .httpError(let code, let message) = error {
+            assertEqual(code, 503)
+            assertEqual(message, "Redis unavailable")
+        } else {
+            assertTrue(false, "Expected httpError, got \(error)")
+        }
+    } catch {
+        assertTrue(false, "Unexpected error: \(error)")
+    }
+
+    // 3. ScheduleStore with VercelBlobSyncService & default server URL
+    var requestHosts: [String] = []
+    MockSyncURLProtocol.handler = { request, _ in
+        if let host = request.url?.host {
+            requestHosts.append(host)
+        }
+        let emptyPayload = SyncLatestResponse(latest: nil, snapshot: nil, allBlobs: [])
+        let data = try JSONEncoder().encode(emptyPayload)
+        let http = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        return (http, data)
+    }
+
+    let realStore = makeIsolatedStore(role: .parent, transport: service)
+    assertEqual(realStore.syncServerURL, "https://weekly-schedule-six-seven.vercel.app", "ScheduleStore starts with default server URL")
+    assertEqual(realStore.isSyncServerConfigured, true)
+
+    await realStore.syncNow(forceUploadIfEmpty: false)
+    assertTrue(requestHosts.contains("weekly-schedule-six-seven.vercel.app"), "Default sync should target weekly-schedule-six-seven.vercel.app")
+
+    // If syncServerURL is explicitly empty, background sync skips without error and manual sync informs user
+    let countBeforeEmpty = requestHosts.count
+    realStore.syncServerURL = ""
+    await realStore.syncNow(forceUploadIfEmpty: false)
+    assertEqual(requestHosts.count, countBeforeEmpty, "Background sync must skip network call when server URL is empty")
+    assertTrue(realStore.syncErrorMessage == nil, "Background skip must not surface error banner")
+
+    await realStore.syncNow(forceUploadIfEmpty: true)
+    assertEqual(requestHosts.count, countBeforeEmpty, "Manual sync without URL must not make network call")
+    assertTrue(realStore.syncErrorMessage != nil, "Manual sync without URL should inform user")
+
+    // Configure server URL -> sync succeeds
+    MockSyncURLProtocol.handler = { request, _ in
+        if request.url!.path == "/api/sync/latest" {
+            let res = SyncLatestResponse(
+                latest: VercelBlobItem(
+                    url: "redis://ws:family:family-main:latest#families/family-main/state-0001-seed.json",
+                    pathname: "families/family-main/state-0001-seed.json",
+                    size: 512,
+                    uploadedAt: nil
+                ),
+                snapshot: seededSnapshot,
+                allBlobs: []
+            )
+            let data = try JSONEncoder().encode(res)
+            let http = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            return (http, data)
+        }
+        let putRes = VercelBlobPutResponse(
+            url: "redis://ws:family:family-main:latest#families/family-main/state-0002.json",
+            pathname: "families/family-main/state-0002.json"
+        )
+        let data = try JSONEncoder().encode(putRes)
+        let http = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        return (http, data)
+    }
+
+    realStore.updateSyncSettings(serverURL: "https://sync.example.com/", familyCode: "family-main")
+    assertEqual(realStore.syncServerURL, "https://sync.example.com")
+    assertEqual(realStore.isSyncServerConfigured, true)
+    await realStore.syncNow(forceUploadIfEmpty: true)
+    assertTrue(realStore.syncErrorMessage == nil, "Configured server URL should clear sync error")
+    assertEqual(realStore.availableHearts, 42, "Store should merge snapshot from Upstash proxy")
+
+    // 4. WidgetSharedState legacy Codable backward compatibility
+    let legacyJSON = """
+    {
+        "updatedAt": 1794000000,
+        "vercelBlobToken": "vercel_blob_rw_legacy_secret",
+        "familyCode": "family-main",
+        "deviceId": "widget-1",
+        "deviceRoleShortTitle": "👦 아이",
+        "items": [],
+        "deletedItemTimestamps": {},
+        "weeklyOverrides": {},
+        "completionFlags": {},
+        "subTaskCompletionFlags": {},
+        "parentVerifiedFlags": {},
+        "parentVerifiedSubTaskFlags": {}
+    }
+    """.data(using: .utf8)!
+    let decodedWidgetState = try! JSONDecoder().decode(WidgetSharedState.self, from: legacyJSON)
+    assertEqual(decodedWidgetState.syncServerURL, "https://weekly-schedule-six-seven.vercel.app", "Legacy vercelBlobToken JSON must decode cleanly with default syncServerURL")
+    assertEqual(decodedWidgetState.familyCode, "family-main")
+
+    MockSyncURLProtocol.handler = nil
+    print("✅ Scenario 6 passed!")
+}
+
+@MainActor
+func testForegroundOnlyPollingImmediateReturnAndImmediatePush() async {
+    print("Running Scenario 7: Foreground-only 60s polling, immediate return check, no background checks, and immediate push...")
+    assertEqual(ScheduleStore.foregroundSyncInterval, 60, "Default foreground sync polling interval must be 60 seconds")
+
+    let transport = InMemoryCloudSyncTransport()
+    transport.seed(snapshot: makeSeededSnapshot(earnedHearts: 10, redemptions: []))
+
+    let store = makeIsolatedStore(
+        role: .parent,
+        transport: transport,
+        syncPollingInterval: 0.08
+    )
+
+    // Starts inactive with no timer and no background checks
+    assertEqual(store.isForegroundSyncActive, false)
+    assertEqual(store.isSyncTimerActive, false)
+    try? await Task.sleep(nanoseconds: 120_000_000)
+    assertEqual(transport.fetchCount, 0, "Inactive store must not poll in background")
+
+    // Activate foreground: immediate check once + timer starts and polls while active
+    store.setForegroundSyncActive(true)
+    assertEqual(store.isForegroundSyncActive, true)
+    assertEqual(store.isSyncTimerActive, true)
+    try? await Task.sleep(nanoseconds: 40_000_000)
+    assertTrue(transport.fetchCount >= 1, "Activating foreground must trigger an immediate check")
+
+    let countAfterInitialActive = transport.fetchCount
+    try? await Task.sleep(nanoseconds: 130_000_000)
+    assertTrue(transport.fetchCount > countAfterInitialActive, "Foreground timer must continue polling while active")
+
+    // Deactivate (background / screen off): timer stops and 0 background checks occur
+    store.setForegroundSyncActive(false)
+    assertEqual(store.isForegroundSyncActive, false)
+    assertEqual(store.isSyncTimerActive, false)
+    let countWhenBackgrounded = transport.fetchCount
+    try? await Task.sleep(nanoseconds: 150_000_000)
+    assertEqual(transport.fetchCount, countWhenBackgrounded, "Deactivated store must perform zero checks in background")
+
+    // Return to foreground: immediate check once + timer restarts
+    store.setForegroundSyncActive(true)
+    assertEqual(store.isSyncTimerActive, true)
+    try? await Task.sleep(nanoseconds: 40_000_000)
+    assertTrue(transport.fetchCount > countWhenBackgrounded, "Returning to foreground must immediately check cloud once")
+
+    // Local mutation pushes immediately without 0.35s debounce wait
+    let uploadsBeforeMutation = transport.uploadCount
+    store.sendFamilyPraise(hearts: 5, sticker: .star, message: "즉시 업로드 테스트")
+    try? await Task.sleep(nanoseconds: 50_000_000)
+    assertTrue(transport.uploadCount > uploadsBeforeMutation, "Local mutation must upload immediately without 0.35s wait")
+
+    store.setForegroundSyncActive(false)
+    print("✅ Scenario 7 passed!")
+}
+
 @main
 struct CloudSyncDesyncTestRunner {
     static func main() async {
@@ -390,6 +714,8 @@ struct CloudSyncDesyncTestRunner {
         await testPreExistingStrandedUserDefaultsHealsWithoutPendingFlagAndConvergesWithoutPingPong()
         await testInFlightMutationDuringUploadIsNotDropped()
         await testParentPhoneCompletionWithoutUnlockAndSyncsToChild()
+        await testUpstashProxySyncServiceAndEmptyURLHandling()
+        await testForegroundOnlyPollingImmediateReturnAndImmediatePush()
         print("🎉 ALL CloudSyncDesyncTests PASSED!")
     }
 }

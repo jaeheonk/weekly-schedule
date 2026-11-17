@@ -9,8 +9,7 @@ struct WeeklyScheduleApp: App {
         _ = NotificationManager.shared
         let newStore = ScheduleStore()
         _store = StateObject(wrappedValue: newStore)
-        BackgroundRefreshManager.shared.register()
-        BackgroundRefreshManager.shared.store = newStore
+        BackgroundRefreshManager.shared.cancelAllPendingRefreshes()
     }
 
     var body: some Scene {

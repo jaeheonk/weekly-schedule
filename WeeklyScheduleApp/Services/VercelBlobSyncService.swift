@@ -7,9 +7,10 @@ struct VercelBlobItem: Codable, Equatable {
     let uploadedAt: String?
 }
 
-struct VercelBlobListResponse: Codable {
-    let hasMore: Bool?
-    let blobs: [VercelBlobItem]
+struct SyncLatestResponse: Codable {
+    let latest: VercelBlobItem?
+    let snapshot: CloudSyncSnapshot?
+    let allBlobs: [VercelBlobItem]
 }
 
 struct VercelBlobPutResponse: Codable {
@@ -18,16 +19,19 @@ struct VercelBlobPutResponse: Codable {
 }
 
 enum VercelBlobSyncError: LocalizedError {
-    case missingToken
+    case missingServerURL
     case invalidURL
+    case invalidSnapshotPayload
     case httpError(statusCode: Int, message: String)
 
     var errorDescription: String? {
         switch self {
-        case .missingToken:
-            return "Vercel Blob 토큰이 비어 있습니다."
+        case .missingServerURL:
+            return "동기화 서버 URL이 설정되지 않았습니다."
         case .invalidURL:
-            return "잘못된 동기화 URL입니다."
+            return "잘못된 동기화 서버 URL입니다."
+        case .invalidSnapshotPayload:
+            return "서버 응답에 유효한 스냅샷 데이터가 없습니다."
         case .httpError(let code, let message):
             return "동기화 서버 응답 오류 (\(code)): \(message)"
         }
@@ -35,16 +39,16 @@ enum VercelBlobSyncError: LocalizedError {
 }
 
 protocol CloudSyncTransport {
-    func fetchLatestBlobMetadata(
-        token: String,
-        familyCode: String
-    ) async throws -> (latest: VercelBlobItem?, allBlobs: [VercelBlobItem])
+    var requiresServerURL: Bool { get }
 
-    func downloadSnapshot(from blobURLString: String, token: String) async throws -> CloudSyncSnapshot
+    func fetchLatestSnapshot(
+        serverURL: String,
+        familyCode: String
+    ) async throws -> SyncLatestResponse
 
     func uploadSnapshot(
         _ snapshot: CloudSyncSnapshot,
-        token: String,
+        serverURL: String,
         familyCode: String,
         shortDeviceId: String,
         previousBlobsToDelete: [VercelBlobItem]
@@ -54,155 +58,135 @@ protocol CloudSyncTransport {
 final class VercelBlobSyncService: CloudSyncTransport {
     static let shared = VercelBlobSyncService()
 
-    /// 사용자 제공 기본 Vercel Blob Read/Write 토큰
-    static let defaultToken = "vercel_blob_rw_z8SmedqOGmynl5Hm_y3N5ZOKGow5ZsDIviQp1VGLRlxJSCT"
+    /// 기본 Upstash 동기화 프록시 서버 URL
+    static let defaultServerURL = "https://weekly-schedule-six-seven.vercel.app"
     static let defaultFamilyCode = "family-main"
+
+    var requiresServerURL: Bool { true }
 
     private let session: URLSession
 
-    private init() {
-        let config = URLSessionConfiguration.ephemeral
-        config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        config.urlCache = nil
-        config.timeoutIntervalForRequest = 15
-        config.timeoutIntervalForResource = 25
-        self.session = URLSession(configuration: config)
+    init(session: URLSession? = nil) {
+        if let session {
+            self.session = session
+        } else {
+            let config = URLSessionConfiguration.ephemeral
+            config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+            config.urlCache = nil
+            config.timeoutIntervalForRequest = 20
+            config.timeoutIntervalForResource = 45
+            self.session = URLSession(configuration: config)
+        }
     }
 
-    /// 현재 가족 채널의 가장 최신 스냅샷 메타데이터와 정리할 이전 스냅샷 URL 목록을 조회합니다.
-    func fetchLatestBlobMetadata(
-        token: String,
+    static func normalizeServerURL(_ raw: String) -> String {
+        var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") {
+            trimmed.removeLast()
+        }
+        if trimmed.lowercased().hasSuffix("/api/sync") {
+            trimmed.removeLast("/api/sync".count)
+            while trimmed.hasSuffix("/") {
+                trimmed.removeLast()
+            }
+        }
+        return trimmed
+    }
+
+    /// 현재 가족 채널의 최신 스냅샷과 메타데이터를 Vercel 동기화 프록시(`/api/sync/latest` -> Upstash)에서 조회합니다.
+    func fetchLatestSnapshot(
+        serverURL: String,
         familyCode: String
-    ) async throws -> (latest: VercelBlobItem?, allBlobs: [VercelBlobItem]) {
-        let cleanToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanToken.isEmpty else { throw VercelBlobSyncError.missingToken }
-
+    ) async throws -> SyncLatestResponse {
         let safeFamily = sanitizeFamilyCode(familyCode)
-        let prefix = "families/\(safeFamily)/state-"
-        guard var components = URLComponents(string: "https://blob.vercel-storage.com") else {
-            throw VercelBlobSyncError.invalidURL
-        }
         let cacheBuster = String(Int64(Date().timeIntervalSince1970 * 1000))
-        components.queryItems = [
-            URLQueryItem(name: "prefix", value: prefix),
-            URLQueryItem(name: "limit", value: "100"),
-            URLQueryItem(name: "_t", value: cacheBuster)
-        ]
-        guard let url = components.url else { throw VercelBlobSyncError.invalidURL }
+        let url = try makeEndpointURL(
+            serverURL: serverURL,
+            path: "/api/sync/latest",
+            queryItems: [
+                URLQueryItem(name: "familyCode", value: safeFamily),
+                URLQueryItem(name: "_t", value: cacheBuster)
+            ]
+        )
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("Bearer \(cleanToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("7", forHTTPHeaderField: "x-api-version")
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
 
         let (data, response) = try await session.data(for: request)
         try validateHTTPResponse(response, data: data)
 
-        let decoded = try JSONDecoder().decode(VercelBlobListResponse.self, from: data)
-        // pathname 형식: families/<familyCode>/state-<timestampMs>-<deviceId>.json
-        // 최신 파일이 맨 앞에 오도록 정렬
-        let sorted = decoded.blobs.sorted { a, b in
-            a.pathname > b.pathname
-        }
-        return (sorted.first, sorted)
+        return try JSONDecoder().decode(SyncLatestResponse.self, from: data)
     }
 
-    /// 특정 Blob URL에서 스냅샷 JSON을 다운로드합니다.
-    func downloadSnapshot(from blobURLString: String, token: String) async throws -> CloudSyncSnapshot {
-        let cleanToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanToken.isEmpty else { throw VercelBlobSyncError.missingToken }
-        guard let url = URL(string: blobURLString) else { throw VercelBlobSyncError.invalidURL }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("Bearer \(cleanToken)", forHTTPHeaderField: "Authorization")
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-
-        let (data, response) = try await session.data(for: request)
-        try validateHTTPResponse(response, data: data)
-
-        return try JSONDecoder().decode(CloudSyncSnapshot.self, from: data)
-    }
-
-    /// 새로운 스냅샷을 업로드하고 이전 스냅샷 파일들을 정리합니다.
+    /// 새로운 스냅샷을 Vercel 동기화 프록시(`/api/sync/upload` -> Upstash)로 업로드합니다.
     func uploadSnapshot(
         _ snapshot: CloudSyncSnapshot,
-        token: String,
+        serverURL: String,
         familyCode: String,
         shortDeviceId: String,
         previousBlobsToDelete: [VercelBlobItem]
     ) async throws -> VercelBlobPutResponse {
-        let cleanToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !cleanToken.isEmpty else { throw VercelBlobSyncError.missingToken }
-
         let safeFamily = sanitizeFamilyCode(familyCode)
-        let timestampMs = Int64(Date().timeIntervalSince1970 * 1000)
-        let paddedTs = String(format: "%014lld", timestampMs)
-        let pathname = "families/\(safeFamily)/state-\(paddedTs)-\(shortDeviceId).json"
+        let url = try makeEndpointURL(serverURL: serverURL, path: "/api/sync/upload")
 
-        let bodyData = try JSONEncoder().encode(snapshot)
-        let putResult = try await performPut(pathname: pathname, bodyData: bodyData, token: cleanToken, accessMode: "private")
-
-        // 업로드 성공 후 이전 스냅샷 파일들 비동기 삭제 (최근 1개만 남겨 스토리지 절약)
-        let urlsToDelete = previousBlobsToDelete
-            .map { $0.url }
-            .filter { $0 != putResult.url }
-
-        if !urlsToDelete.isEmpty {
-            Task {
-                try? await deleteBlobs(urls: urlsToDelete, token: cleanToken)
-            }
-        }
-
-        return putResult
-    }
-
-    private func performPut(
-        pathname: String,
-        bodyData: Data,
-        token: String,
-        accessMode: String
-    ) async throws -> VercelBlobPutResponse {
-        guard let url = URL(string: "https://blob.vercel-storage.com/\(pathname)") else {
-            throw VercelBlobSyncError.invalidURL
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("7", forHTTPHeaderField: "x-api-version")
-        request.setValue("application/json", forHTTPHeaderField: "x-content-type")
-        request.setValue(accessMode, forHTTPHeaderField: "x-vercel-blob-access")
-        request.setValue("0", forHTTPHeaderField: "x-add-random-suffix")
-        request.setValue("1", forHTTPHeaderField: "x-allow-overwrite")
-        request.setValue("0", forHTTPHeaderField: "x-cache-control-max-age")
-        request.httpBody = bodyData
-
-        let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode == 400, accessMode == "private" {
-            let text = String(data: data, encoding: .utf8) ?? ""
-            if text.localizedCaseInsensitiveContains("public") {
-                return try await performPut(pathname: pathname, bodyData: bodyData, token: token, accessMode: "public")
-            }
-        }
-        try validateHTTPResponse(response, data: data)
-        return try JSONDecoder().decode(VercelBlobPutResponse.self, from: data)
-    }
-
-    func deleteBlobs(urls: [String], token: String) async throws {
-        guard !urls.isEmpty else { return }
-        guard let url = URL(string: "https://blob.vercel-storage.com/delete") else { return }
+        let payload = SyncUploadRequest(
+            familyCode: safeFamily,
+            shortDeviceId: shortDeviceId,
+            snapshot: snapshot,
+            previousBlobsToDelete: previousBlobsToDelete
+        )
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("7", forHTTPHeaderField: "x-api-version")
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(payload)
 
-        let payload = ["urls": urls]
-        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        _ = try? await session.data(for: request)
+        let (data, response) = try await session.data(for: request)
+        try validateHTTPResponse(response, data: data)
+
+        return try JSONDecoder().decode(VercelBlobPutResponse.self, from: data)
+    }
+
+    private struct SyncUploadRequest: Encodable {
+        let familyCode: String
+        let shortDeviceId: String
+        let snapshot: CloudSyncSnapshot
+        let previousBlobsToDelete: [VercelBlobItem]
+    }
+
+    private func makeEndpointURL(
+        serverURL: String,
+        path: String,
+        queryItems: [URLQueryItem] = []
+    ) throws -> URL {
+        let cleanBase = Self.normalizeServerURL(serverURL)
+        guard !cleanBase.isEmpty else {
+            throw VercelBlobSyncError.missingServerURL
+        }
+        guard var components = URLComponents(string: cleanBase),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = components.host,
+              !host.isEmpty else {
+            throw VercelBlobSyncError.invalidURL
+        }
+
+        var basePath = components.path
+        while basePath.hasSuffix("/") {
+            basePath.removeLast()
+        }
+        components.path = basePath + path
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
+
+        guard let url = components.url else {
+            throw VercelBlobSyncError.invalidURL
+        }
+        return url
     }
 
     private func sanitizeFamilyCode(_ raw: String) -> String {
@@ -215,8 +199,11 @@ final class VercelBlobSyncService: CloudSyncTransport {
     private func validateHTTPResponse(_ response: URLResponse, data: Data) throws {
         guard let http = response as? HTTPURLResponse else { return }
         guard (200...299).contains(http.statusCode) else {
-            let serverMessage = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["message"] as? String
-                ?? String(data: data, encoding: .utf8)
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            let rawText = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let serverMessage = (json?["error"] as? String)
+                ?? (json?["message"] as? String)
+                ?? (rawText?.isEmpty == false ? rawText : nil)
                 ?? "알 수 없는 오류"
             throw VercelBlobSyncError.httpError(statusCode: http.statusCode, message: serverMessage)
         }

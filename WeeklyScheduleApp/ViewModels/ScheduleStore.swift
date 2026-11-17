@@ -121,10 +121,14 @@ final class ScheduleStore: ObservableObject {
     @Published private(set) var isParentModeUnlocked: Bool = false
     @Published private(set) var parentModeUnlockedUntil: Date? = nil
 
-    /// Vercel Blob 동기화 설정 및 상태
-    @Published var vercelBlobToken: String = VercelBlobSyncService.defaultToken
+    /// Upstash(Vercel 프록시) 클라우드 동기화 설정 및 상태
+    @Published var syncServerURL: String = VercelBlobSyncService.defaultServerURL
     @Published var familyCode: String = VercelBlobSyncService.defaultFamilyCode
     @Published var isCloudSyncEnabled: Bool = true
+
+    var isSyncServerConfigured: Bool {
+        !VercelBlobSyncService.normalizeServerURL(syncServerURL).isEmpty
+    }
     @Published private(set) var isSyncing: Bool = false
     @Published private(set) var lastSyncedAt: Date? = nil
     @Published private(set) var lastRemoteUpdatedBy: String? = nil
@@ -177,16 +181,21 @@ final class ScheduleStore: ObservableObject {
     private let revokedRewardRedemptionsStorageKey = "weekly_schedule_revoked_reward_redemptions_v1"
     private let pendingCloudPushStorageKey = "weekly_schedule_pending_cloud_push_v1"
     private let syncFlagsStorageKey = "weekly_schedule_sync_flags_v1"
-    private let vercelTokenStorageKey = "weekly_schedule_vercel_blob_token_v1"
+    private let syncServerURLStorageKey = "weekly_schedule_sync_server_url_v1"
     private let familyCodeStorageKey = "weekly_schedule_family_code_v1"
 
     private let userDefaults: UserDefaults
     private let syncTransport: CloudSyncTransport
     private let enableSystemSideEffects: Bool
+    nonisolated static let foregroundSyncInterval: TimeInterval = 60
+
     private let deviceId: String
     private var lastSyncedBlobPathname: String? = nil
-    private var hasPendingCloudPush: Bool = false
+    private(set) var hasPendingCloudPush: Bool = false
     private var localMutationVersion: UInt64 = 0
+    private let syncPollingInterval: TimeInterval
+    private(set) var isForegroundSyncActive: Bool = false
+    private var hasPerformedInitialSync: Bool = false
     private struct QueuedSyncRequest {
         var push: Bool
         var forceDownload: Bool
@@ -204,15 +213,21 @@ final class ScheduleStore: ObservableObject {
     private var pushDebounceTask: Task<Void, Never>?
     private var toastDismissTask: Task<Void, Never>?
 
+    var isSyncTimerActive: Bool {
+        syncTimer != nil
+    }
+
     init(
         userDefaults: UserDefaults = .standard,
         syncTransport: CloudSyncTransport = VercelBlobSyncService.shared,
         enableSystemSideEffects: Bool = true,
-        autoStartBackgroundTasks: Bool = true
+        autoStartBackgroundTasks: Bool = true,
+        syncPollingInterval: TimeInterval = ScheduleStore.foregroundSyncInterval
     ) {
         self.userDefaults = userDefaults
         self.syncTransport = syncTransport
         self.enableSystemSideEffects = enableSystemSideEffects
+        self.syncPollingInterval = syncPollingInterval
 
         if let savedId = userDefaults.string(forKey: deviceIdStorageKey), !savedId.isEmpty {
             self.deviceId = savedId
@@ -247,7 +262,7 @@ final class ScheduleStore: ObservableObject {
         lastObservedDay = Calendar.current.startOfDay(for: currentDate)
         lastObservedWeekPrefix = currentWeekPrefix
         if autoStartBackgroundTasks {
-            startTimers()
+            startClockTimer()
             setupDateChangeObserver()
 
             Task {
@@ -259,7 +274,6 @@ final class ScheduleStore: ObservableObject {
                         await NotificationManager.shared.disableAllNotificationsForParent()
                     }
                 }
-                await pullLatestFromCloud(isInitialLaunch: true)
             }
         }
     }
@@ -308,7 +322,8 @@ final class ScheduleStore: ObservableObject {
         }
     }
 
-    private func startTimers() {
+    private func startClockTimer() {
+        clockTimer?.invalidate()
         clockTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -320,13 +335,49 @@ final class ScheduleStore: ObservableObject {
                 }
             }
         }
+    }
 
-        // 8초마다 클라우드 변경사항 확인 (가벼운 메타데이터 조회 후 변경 시에만 다운로드)
-        syncTimer = Timer.scheduledTimer(withTimeInterval: 8, repeats: true) { [weak self] _ in
+    private func startForegroundSyncTimer() {
+        syncTimer?.invalidate()
+        syncTimer = nil
+        guard isForegroundSyncActive, syncPollingInterval > 0 else { return }
+
+        // 화면이 켜져 있고 앱이 활성 상태일 때만 60초마다 클라우드 변경사항 확인
+        syncTimer = Timer.scheduledTimer(withTimeInterval: syncPollingInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, self.isCloudSyncEnabled, !self.isSyncing else { return }
+                guard let self, self.isForegroundSyncActive, self.isCloudSyncEnabled, !self.isSyncing else { return }
                 await self.pullLatestFromCloud(isInitialLaunch: false)
             }
+        }
+    }
+
+    private func stopForegroundSyncTimer() {
+        syncTimer?.invalidate()
+        syncTimer = nil
+    }
+
+    /// 화면 활성/비활성 전환에 따라 포그라운드 60초 폴링을 시작·중단하고, 복귀 시 즉시 1회 확인합니다.
+    func setForegroundSyncActive(_ isActive: Bool) {
+        if isActive {
+            guard !isForegroundSyncActive else { return }
+            isForegroundSyncActive = true
+            refreshDateAndDayChange()
+            startForegroundSyncTimer()
+            guard isCloudSyncEnabled else { return }
+            let isFirstSync = !hasPerformedInitialSync
+            hasPerformedInitialSync = true
+            Task { @MainActor [weak self] in
+                guard let self, self.isForegroundSyncActive else { return }
+                if isFirstSync {
+                    await self.pullLatestFromCloud(isInitialLaunch: true)
+                } else {
+                    await self.syncNow(forceUploadIfEmpty: false)
+                }
+            }
+        } else {
+            guard isForegroundSyncActive || syncTimer != nil else { return }
+            isForegroundSyncActive = false
+            stopForegroundSyncTimer()
         }
     }
 
@@ -1693,26 +1744,20 @@ final class ScheduleStore: ObservableObject {
         var allPraiseIds = Set(starTransactions.compactMap { $0.linkedRedemptionId?.uuidString })
 
         // 원격 최신 스냅샷에 남아있을 수 있는 고아 트랜잭션 ID들도 모두 수집 (아이 폰 잔류 스타 방지)
-        let cleanToken = vercelBlobToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cleanToken.isEmpty {
-            if let (latest, _) = try? await syncTransport.fetchLatestBlobMetadata(
-                token: cleanToken,
+        if !syncTransport.requiresServerURL || isSyncServerConfigured {
+            if let response = try? await syncTransport.fetchLatestSnapshot(
+                serverURL: syncServerURL,
                 familyCode: familyCode
-            ), let latestBlob = latest {
-                if let remoteSnapshot = try? await syncTransport.downloadSnapshot(
-                    from: latestBlob.url,
-                    token: cleanToken
-                ) {
-                    for tx in remoteSnapshot.starTransactions {
-                        allTxIds.insert(tx.id)
-                        if let rId = tx.linkedRedemptionId {
-                            allRedemptionIds.insert(rId.uuidString)
-                            allPraiseIds.insert(rId.uuidString)
-                        }
+            ), let remoteSnapshot = response.snapshot {
+                for tx in remoteSnapshot.starTransactions {
+                    allTxIds.insert(tx.id)
+                    if let rId = tx.linkedRedemptionId {
+                        allRedemptionIds.insert(rId.uuidString)
+                        allPraiseIds.insert(rId.uuidString)
                     }
-                    for req in remoteSnapshot.starRedemptionRequests {
-                        allRedemptionIds.insert(req.id.uuidString)
-                    }
+                }
+                for req in remoteSnapshot.starRedemptionRequests {
+                    allRedemptionIds.insert(req.id.uuidString)
                 }
             }
         }
@@ -2139,20 +2184,23 @@ final class ScheduleStore: ObservableObject {
         }
     }
 
-    // MARK: - ☁️ Vercel Blob Real-Time Cloud Sync Engine
+    // MARK: - ☁️ Upstash Proxy Real-Time Cloud Sync Engine
 
-    func updateSyncSettings(token: String, familyCode: String) {
-        let cleanToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+    func updateSyncSettings(serverURL: String, familyCode: String) {
+        let cleanURL = VercelBlobSyncService.normalizeServerURL(serverURL)
         let cleanFamily = familyCode.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.vercelBlobToken = cleanToken.isEmpty ? VercelBlobSyncService.defaultToken : cleanToken
+        self.syncServerURL = cleanURL.isEmpty ? VercelBlobSyncService.defaultServerURL : cleanURL
         self.familyCode = cleanFamily.isEmpty ? VercelBlobSyncService.defaultFamilyCode : cleanFamily
-        userDefaults.set(self.vercelBlobToken, forKey: vercelTokenStorageKey)
+        userDefaults.set(self.syncServerURL, forKey: syncServerURLStorageKey)
         userDefaults.set(self.familyCode, forKey: familyCodeStorageKey)
         lastSyncedBlobPathname = nil
+        syncErrorMessage = nil
         syncWidgetState()
 
-        Task {
-            await syncNow(forceUploadIfEmpty: true)
+        if !syncTransport.requiresServerURL || isSyncServerConfigured {
+            Task {
+                await syncNow(forceUploadIfEmpty: true)
+            }
         }
     }
 
@@ -2171,7 +2219,6 @@ final class ScheduleStore: ObservableObject {
         markCloudPushPending()
         pushDebounceTask?.cancel()
         pushDebounceTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 350_000_000) // 0.35초 디바운스
             guard !Task.isCancelled, let self else { return }
             self.pushDebounceTask = nil
             await self.performSerializedSync(
@@ -2214,6 +2261,15 @@ final class ScheduleStore: ObservableObject {
     /// 수동 새로고침 / 즉시 동기화
     func syncNow(forceUploadIfEmpty: Bool = true) async {
         guard isCloudSyncEnabled else { return }
+        if isForegroundSyncActive {
+            startForegroundSyncTimer()
+        }
+        if syncTransport.requiresServerURL && !isSyncServerConfigured {
+            if forceUploadIfEmpty {
+                syncErrorMessage = VercelBlobSyncError.missingServerURL.localizedDescription
+            }
+            return
+        }
         await performSerializedSync(
             push: hasPendingCloudPush,
             forceDownload: true,
@@ -2223,7 +2279,7 @@ final class ScheduleStore: ObservableObject {
     }
 
     private func pullLatestFromCloud(isInitialLaunch: Bool, forceDownload: Bool = false) async {
-        guard !vercelBlobToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !syncTransport.requiresServerURL || isSyncServerConfigured else { return }
         await performSerializedSync(
             push: hasPendingCloudPush,
             forceDownload: forceDownload,
@@ -2238,7 +2294,7 @@ final class ScheduleStore: ObservableObject {
         forceUploadIfEmpty: Bool,
         isInitialLaunch: Bool
     ) async {
-        guard !vercelBlobToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !syncTransport.requiresServerURL || isSyncServerConfigured else { return }
 
         if let existing = pendingSyncRequest {
             pendingSyncRequest = QueuedSyncRequest(
@@ -2281,10 +2337,12 @@ final class ScheduleStore: ObservableObject {
 
     private func executeSyncCycle(_ request: QueuedSyncRequest) async {
         do {
-            let (latest, allBlobs) = try await syncTransport.fetchLatestBlobMetadata(
-                token: vercelBlobToken,
+            let latestResponse = try await syncTransport.fetchLatestSnapshot(
+                serverURL: syncServerURL,
                 familyCode: familyCode
             )
+            let latest = latestResponse.latest
+            let allBlobs = latestResponse.allBlobs
 
             guard let latestBlob = latest else {
                 // 클라우드에 아직 가족 스냅샷이 하나도 없으면 필요 시 현재 기기 데이터를 최초 업로드
@@ -2293,7 +2351,7 @@ final class ScheduleStore: ObservableObject {
                     let snapshot = makeCurrentSnapshot()
                     let putResult = try await syncTransport.uploadSnapshot(
                         snapshot,
-                        token: vercelBlobToken,
+                        serverURL: syncServerURL,
                         familyCode: familyCode,
                         shortDeviceId: deviceId,
                         previousBlobsToDelete: allBlobs
@@ -2324,10 +2382,9 @@ final class ScheduleStore: ObservableObject {
             }
 
             if needsDownload {
-                let remoteSnapshot = try await syncTransport.downloadSnapshot(
-                    from: latestBlob.url,
-                    token: vercelBlobToken
-                )
+                guard let remoteSnapshot = latestResponse.snapshot else {
+                    throw VercelBlobSyncError.invalidSnapshotPayload
+                }
                 let prevHearts = availableHearts
                 let prevSpent = totalSpentHearts
                 let prevEarnedStars = totalEarnedStars
@@ -2428,7 +2485,7 @@ final class ScheduleStore: ObservableObject {
                 let snapshot = makeCurrentSnapshot()
                 let putResult = try await syncTransport.uploadSnapshot(
                     snapshot,
-                    token: vercelBlobToken,
+                    serverURL: syncServerURL,
                     familyCode: familyCode,
                     shortDeviceId: deviceId,
                     previousBlobsToDelete: allBlobs
@@ -3079,10 +3136,11 @@ final class ScheduleStore: ObservableObject {
     }
 
     private func loadSyncSettings() {
-        if let savedToken = userDefaults.string(forKey: vercelTokenStorageKey), !savedToken.isEmpty {
-            self.vercelBlobToken = savedToken
+        if let savedURL = userDefaults.string(forKey: syncServerURLStorageKey) {
+            let normalized = VercelBlobSyncService.normalizeServerURL(savedURL)
+            self.syncServerURL = normalized.isEmpty ? VercelBlobSyncService.defaultServerURL : normalized
         } else {
-            self.vercelBlobToken = VercelBlobSyncService.defaultToken
+            self.syncServerURL = VercelBlobSyncService.defaultServerURL
         }
 
         if let savedFamily = userDefaults.string(forKey: familyCodeStorageKey), !savedFamily.isEmpty {
@@ -3334,7 +3392,7 @@ final class ScheduleStore: ObservableObject {
     func syncWidgetState() {
         guard !isRestoringLocalState, enableSystemSideEffects else { return }
         ScheduleWidgetDataManager.shared.saveStateFromMainApp(
-            vercelBlobToken: vercelBlobToken,
+            syncServerURL: syncServerURL,
             familyCode: familyCode,
             deviceId: deviceId,
             deviceRoleShortTitle: deviceRole.shortBadgeTitle,

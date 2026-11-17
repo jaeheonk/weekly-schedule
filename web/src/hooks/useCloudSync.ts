@@ -8,6 +8,7 @@ import { SyncStatus } from '../components/SyncToast';
 // to answer the request that wakes it. Show the syncing toast once a request
 // has been waiting, and leave the request running until the proxy responds.
 const SLOW_SYNC_NOTICE_MS = 3000;
+export const FOREGROUND_SYNC_INTERVAL_MS = 60000;
 
 export interface UseCloudSyncOptions {
   store?: ScheduleStore;
@@ -25,7 +26,7 @@ interface TriggerSyncOptions {
 export function useCloudSync({
   store = globalScheduleStore,
   syncService = VercelBlobSyncService.shared(),
-  pollingIntervalMs = 30000,
+  pollingIntervalMs = FOREGROUND_SYNC_INTERVAL_MS,
   syncOnMount = true,
   onSyncRequest,
 }: UseCloudSyncOptions = {}) {
@@ -40,7 +41,7 @@ export function useCloudSync({
   const isDirtyRef = useRef(false);
   const mutationVersionRef = useRef(0);
   const isApplyingRemoteRef = useRef(false);
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearToast = useCallback(() => {
@@ -96,7 +97,7 @@ export function useCloudSync({
         // 1. Fetch the latest 클라우드 동기화 스냅샷 from the proxy
         const { latest, snapshot, allBlobs } = await syncService.fetchLatestSnapshot(familyCode);
 
-        // If background polling and remote hasn't changed and local is clean, skip work
+        // If polling and remote hasn't changed and local is clean, skip work
         if (
           !options.isManual &&
           !options.forceUpload &&
@@ -191,7 +192,7 @@ export function useCloudSync({
         } else if (options.isManual || announcedSlowSync) {
           showCompletedToast();
         } else {
-          // Quiet background sync: no intrusive toast
+          // Quiet foreground sync: no intrusive toast
           setSyncStatus('idle');
           setToastMessage(null);
         }
@@ -240,28 +241,36 @@ export function useCloudSync({
     [runSingleSyncCycle]
   );
 
-  // Debounced auto-upload on local store mutations
+  const stopForegroundPolling = useCallback(() => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+  }, []);
+
+  const startForegroundPolling = useCallback(() => {
+    stopForegroundPolling();
+    if (pollingIntervalMs <= 0 || document.visibilityState !== 'visible') {
+      return;
+    }
+    pollingIntervalRef.current = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        triggerSync({ isManual: false });
+      }
+    }, pollingIntervalMs);
+  }, [pollingIntervalMs, stopForegroundPolling, triggerSync]);
+
+  // Immediate auto-upload on local store mutations (no debounce wait)
   useEffect(() => {
     const unsubscribe = store.subscribe(() => {
       if (isApplyingRemoteRef.current) return;
       mutationVersionRef.current += 1;
       isDirtyRef.current = true;
-
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
-      debounceTimerRef.current = setTimeout(() => {
-        if (isDirtyRef.current) {
-          triggerSync({ isManual: false, forceUpload: true });
-        }
-      }, 1500);
+      triggerSync({ isManual: false, forceUpload: true });
     });
 
     return () => {
       unsubscribe();
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
     };
   }, [store, triggerSync]);
 
@@ -274,40 +283,57 @@ export function useCloudSync({
           onSyncRequest();
         }
         triggerSync({ isManual: true });
+        if (document.visibilityState === 'visible') {
+          startForegroundPolling();
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [triggerSync, onSyncRequest]);
+  }, [triggerSync, onSyncRequest, startForegroundPolling]);
 
-  // Tab visibility change: trigger background sync when user returns to app tab
+  // Screen/tab visibility lifecycle:
+  // - Only poll every 60s while visible (active on screen)
+  // - Never poll in background (hidden)
+  // - Check immediately once when returning to visible screen
   useEffect(() => {
+    startForegroundPolling();
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         triggerSync({ isManual: false });
+        startForegroundPolling();
+      } else {
+        stopForegroundPolling();
       }
     };
 
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted && document.visibilityState === 'visible') {
+        triggerSync({ isManual: false });
+        startForegroundPolling();
+      }
+    };
+
+    const handlePageHide = () => {
+      stopForegroundPolling();
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () =>
+    window.addEventListener('pageshow', handlePageShow);
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      stopForegroundPolling();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [triggerSync]);
+      window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, [triggerSync, startForegroundPolling, stopForegroundPolling]);
 
-  // Background polling every 30 seconds
+  // Initial sync on mount (only when visible)
   useEffect(() => {
-    if (pollingIntervalMs <= 0) return;
-
-    const intervalId = setInterval(() => {
-      triggerSync({ isManual: false });
-    }, pollingIntervalMs);
-
-    return () => clearInterval(intervalId);
-  }, [triggerSync, pollingIntervalMs]);
-
-  // Initial sync on mount
-  useEffect(() => {
-    if (syncOnMount) {
+    if (syncOnMount && document.visibilityState === 'visible') {
       triggerSync({ isManual: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

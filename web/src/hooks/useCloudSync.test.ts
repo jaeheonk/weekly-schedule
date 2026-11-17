@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useCloudSync } from './useCloudSync';
+import { useCloudSync, FOREGROUND_SYNC_INTERVAL_MS } from './useCloudSync';
 import { ScheduleStore } from '../domain/scheduleStore';
 import { VercelBlobSyncService } from '../services/vercelBlobSync';
 
@@ -10,11 +10,19 @@ describe('useCloudSync Hook', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'visible',
+      configurable: true,
+    });
     store = new ScheduleStore();
     syncService = VercelBlobSyncService.shared();
   });
 
   afterEach(() => {
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'visible',
+      configurable: true,
+    });
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
@@ -346,6 +354,83 @@ describe('useCloudSync Hook', () => {
     });
 
     expect(fetchSpy).toHaveBeenCalled();
+  });
+
+  it('polls every 60 seconds only while visible and stops completely when hidden', async () => {
+    expect(FOREGROUND_SYNC_INTERVAL_MS).toBe(60000);
+    const fetchSpy = vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
+      latest: null,
+      snapshot: null,
+      allBlobs: [],
+    });
+    vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({
+      url: 'https://blob.test/state.json',
+      pathname: 'families/family-main/state.json',
+    });
+
+    renderHook(() => useCloudSync({ store, syncService, syncOnMount: false }));
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    // 30s must NOT poll anymore (changed from 30s to 60s)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(0);
+
+    // At 60s while visible -> 1 poll
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Move tab/screen to background -> stop polling completely
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'hidden',
+      configurable: true,
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await vi.advanceTimersByTimeAsync(180_000);
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Return to visible screen -> immediate 1 check, then 60s later another
+    Object.defineProperty(document, 'visibilityState', {
+      value: 'visible',
+      configurable: true,
+    });
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(3);
+  });
+
+  it('uploads local mutations immediately without waiting for a debounce timer', async () => {
+    const fetchSpy = vi.spyOn(syncService, 'fetchLatestSnapshot').mockResolvedValue({
+      latest: null,
+      snapshot: null,
+      allBlobs: [],
+    });
+    const uploadSpy = vi.spyOn(syncService, 'uploadSnapshot').mockResolvedValue({
+      url: 'https://blob.test/state-immediate.json',
+      pathname: 'families/family-main/state-immediate.json',
+    });
+
+    renderHook(() => useCloudSync({ store, syncService, pollingIntervalMs: 0, syncOnMount: false }));
+
+    await act(async () => {
+      store.sendFamilyPraise({ hearts: 3, sticker: 'star', message: '즉시 업로드' });
+      // Do NOT advance fake timers — upload must start immediately with 0ms wait
+      await Promise.resolve();
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(uploadSpy).toHaveBeenCalledTimes(1);
   });
 
   it('auto-uploads stranded local redemption after merging differing remote snapshot without ping-ponging', async () => {

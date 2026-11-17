@@ -928,7 +928,7 @@ struct StarCelebrationContext: Identifiable, Equatable {
     var totalAvailableStars: Int
 }
 
-// MARK: - Vercel Blob 클라우드 동기화 스냅샷 모델
+// MARK: - Upstash 클라우드 동기화 스냅샷 모델
 struct CloudSyncSnapshot: Codable, Equatable {
     var schemaVersion: Int = 5
     var familyCode: String

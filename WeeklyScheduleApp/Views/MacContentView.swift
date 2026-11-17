@@ -1,6 +1,8 @@
 import SwiftUI
 
 #if os(macOS)
+import AppKit
+
 enum MacNavigationItem: String, CaseIterable, Identifiable, Hashable {
     case weeklyGrid = "weeklyGrid"
     case todaySchedule = "todaySchedule"
@@ -49,6 +51,7 @@ struct MacContentView: View {
     @State private var showingRewardSheet: Bool = false
     @State private var showingStarShopSheet: Bool = false
     @State private var scheduleToEdit: ScheduleItem? = nil
+    @State private var isScreenAwake: Bool = true
 
     var body: some View {
         NavigationSplitView {
@@ -201,17 +204,39 @@ struct MacContentView: View {
                 .frame(minWidth: 540, minHeight: 680)
         }
         .task {
-            await store.syncNow(forceUploadIfEmpty: false)
             await notificationManager.refreshAuthorizationStatus()
         }
-        .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
-                store.refreshDateAndDayChange()
-                Task {
-                    await store.syncNow(forceUploadIfEmpty: false)
-                }
-            }
+        .onChange(of: scenePhase, initial: true) { _, _ in
+            updateForegroundSyncState()
         }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.screensDidSleepNotification)) { _ in
+            isScreenAwake = false
+            updateForegroundSyncState()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.screensDidWakeNotification)) { _ in
+            isScreenAwake = true
+            updateForegroundSyncState()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)) { _ in
+            isScreenAwake = false
+            updateForegroundSyncState()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)) { _ in
+            isScreenAwake = true
+            updateForegroundSyncState()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.sessionDidResignActiveNotification)) { _ in
+            isScreenAwake = false
+            updateForegroundSyncState()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.sessionDidBecomeActiveNotification)) { _ in
+            isScreenAwake = true
+            updateForegroundSyncState()
+        }
+    }
+
+    private func updateForegroundSyncState() {
+        store.setForegroundSyncActive(scenePhase == .active && isScreenAwake)
     }
 
     // MARK: - 사이드바
@@ -343,13 +368,19 @@ struct MacContentView: View {
                 .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                // Vercel Blob 클라우드 상태
+                // Upstash 클라우드 상태
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(store.isSyncing ? Color.orange : Color.green)
+                        .fill(store.isSyncing ? Color.orange : (!store.isSyncServerConfigured ? Color.secondary : Color.green))
                         .frame(width: 8, height: 8)
 
-                    Text(store.isSyncing ? "클라우드 동기화 중..." : (store.lastSyncedAt != nil ? "클라우드 동기화 완료" : "동기화 대기 중"))
+                    Text(
+                        store.isSyncing
+                            ? "클라우드 동기화 중..."
+                            : (!store.isSyncServerConfigured
+                                ? "서버 URL 설정 필요"
+                                : (store.lastSyncedAt != nil ? "Upstash 동기화 완료" : "동기화 대기 중"))
+                    )
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 

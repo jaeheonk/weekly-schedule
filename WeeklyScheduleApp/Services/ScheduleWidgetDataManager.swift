@@ -42,7 +42,7 @@ struct WidgetTaskItem: Codable, Identifiable, Equatable, Sendable {
 /// 본 앱(`ScheduleStore`)과 위젯(`TodayTasksWidget`) 간 공유 상태 스냅샷
 struct WidgetSharedState: Codable, Sendable {
     var updatedAt: TimeInterval
-    var vercelBlobToken: String
+    var syncServerURL: String
     var familyCode: String
     var deviceId: String
     var deviceRoleShortTitle: String
@@ -54,10 +54,71 @@ struct WidgetSharedState: Codable, Sendable {
     var parentVerifiedFlags: [String: SyncTimestampedFlag]
     var parentVerifiedSubTaskFlags: [String: SyncTimestampedFlag]
 
+    enum CodingKeys: String, CodingKey {
+        case updatedAt
+        case syncServerURL
+        case familyCode
+        case deviceId
+        case deviceRoleShortTitle
+        case items
+        case deletedItemTimestamps
+        case weeklyOverrides
+        case completionFlags
+        case subTaskCompletionFlags
+        case parentVerifiedFlags
+        case parentVerifiedSubTaskFlags
+    }
+
+    init(
+        updatedAt: TimeInterval,
+        syncServerURL: String,
+        familyCode: String,
+        deviceId: String,
+        deviceRoleShortTitle: String,
+        items: [ScheduleItem],
+        deletedItemTimestamps: [String: TimeInterval],
+        weeklyOverrides: [String: WeeklyItemOverride],
+        completionFlags: [String: SyncTimestampedFlag],
+        subTaskCompletionFlags: [String: SyncTimestampedFlag],
+        parentVerifiedFlags: [String: SyncTimestampedFlag],
+        parentVerifiedSubTaskFlags: [String: SyncTimestampedFlag]
+    ) {
+        self.updatedAt = updatedAt
+        self.syncServerURL = syncServerURL
+        self.familyCode = familyCode
+        self.deviceId = deviceId
+        self.deviceRoleShortTitle = deviceRoleShortTitle
+        self.items = items
+        self.deletedItemTimestamps = deletedItemTimestamps
+        self.weeklyOverrides = weeklyOverrides
+        self.completionFlags = completionFlags
+        self.subTaskCompletionFlags = subTaskCompletionFlags
+        self.parentVerifiedFlags = parentVerifiedFlags
+        self.parentVerifiedSubTaskFlags = parentVerifiedSubTaskFlags
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.updatedAt = try container.decode(TimeInterval.self, forKey: .updatedAt)
+        let decodedURL = try container.decodeIfPresent(String.self, forKey: .syncServerURL) ?? ""
+        let normalizedURL = VercelBlobSyncService.normalizeServerURL(decodedURL)
+        self.syncServerURL = normalizedURL.isEmpty ? VercelBlobSyncService.defaultServerURL : normalizedURL
+        self.familyCode = try container.decodeIfPresent(String.self, forKey: .familyCode) ?? VercelBlobSyncService.defaultFamilyCode
+        self.deviceId = try container.decodeIfPresent(String.self, forKey: .deviceId) ?? "widget"
+        self.deviceRoleShortTitle = try container.decodeIfPresent(String.self, forKey: .deviceRoleShortTitle) ?? "👦 아이"
+        self.items = try container.decodeIfPresent([ScheduleItem].self, forKey: .items) ?? []
+        self.deletedItemTimestamps = try container.decodeIfPresent([String: TimeInterval].self, forKey: .deletedItemTimestamps) ?? [:]
+        self.weeklyOverrides = try container.decodeIfPresent([String: WeeklyItemOverride].self, forKey: .weeklyOverrides) ?? [:]
+        self.completionFlags = try container.decodeIfPresent([String: SyncTimestampedFlag].self, forKey: .completionFlags) ?? [:]
+        self.subTaskCompletionFlags = try container.decodeIfPresent([String: SyncTimestampedFlag].self, forKey: .subTaskCompletionFlags) ?? [:]
+        self.parentVerifiedFlags = try container.decodeIfPresent([String: SyncTimestampedFlag].self, forKey: .parentVerifiedFlags) ?? [:]
+        self.parentVerifiedSubTaskFlags = try container.decodeIfPresent([String: SyncTimestampedFlag].self, forKey: .parentVerifiedSubTaskFlags) ?? [:]
+    }
+
     static func makeDefault() -> WidgetSharedState {
         WidgetSharedState(
             updatedAt: DefaultScheduleData.baselineTimestamp,
-            vercelBlobToken: VercelBlobSyncService.defaultToken,
+            syncServerURL: VercelBlobSyncService.defaultServerURL,
             familyCode: VercelBlobSyncService.defaultFamilyCode,
             deviceId: "widget",
             deviceRoleShortTitle: "👦 아이",
@@ -130,7 +191,7 @@ final class ScheduleWidgetDataManager: @unchecked Sendable {
     // MARK: - 본 앱(`ScheduleStore`) -> 위젯 상태 저장
 
     func saveStateFromMainApp(
-        vercelBlobToken: String,
+        syncServerURL: String,
         familyCode: String,
         deviceId: String,
         deviceRoleShortTitle: String,
@@ -147,9 +208,10 @@ final class ScheduleWidgetDataManager: @unchecked Sendable {
         let mergedCompletionFlags = Self.mergeFlagDict(local: completionFlags, remote: pending.completionFlags)
         let mergedSubTaskFlags = Self.mergeFlagDict(local: subTaskCompletionFlags, remote: pending.subTaskCompletionFlags)
 
+        let cleanURL = VercelBlobSyncService.normalizeServerURL(syncServerURL)
         let state = WidgetSharedState(
             updatedAt: Date().timeIntervalSince1970,
-            vercelBlobToken: vercelBlobToken.isEmpty ? VercelBlobSyncService.defaultToken : vercelBlobToken,
+            syncServerURL: cleanURL.isEmpty ? VercelBlobSyncService.defaultServerURL : cleanURL,
             familyCode: familyCode.isEmpty ? VercelBlobSyncService.defaultFamilyCode : familyCode,
             deviceId: deviceId,
             deviceRoleShortTitle: deviceRoleShortTitle,
@@ -226,7 +288,7 @@ final class ScheduleWidgetDataManager: @unchecked Sendable {
         // 3. 위젯 타임라인 즉시 리로드 (체크된 항목이 위젯 리스트에서 즉시 사라지고 다음 항목이 올라옴)
         reloadWidgetTimelines()
 
-        // 4. Vercel Blob 클라우드에 최신 완료 상태 병합 업로드
+        // 4. Upstash 클라우드에 최신 완료 상태 병합 업로드
         await pushWidgetCompletionToCloud(
             state: state,
             pending: pending
@@ -379,29 +441,38 @@ final class ScheduleWidgetDataManager: @unchecked Sendable {
         }
     }
 
-    // MARK: - Cloud Sync (`VercelBlobSyncService`)
+    // MARK: - Cloud Sync (`VercelBlobSyncService` -> Upstash Proxy)
+
+    private func resolveSyncServerURL(from state: WidgetSharedState) -> String {
+        let stateURL = VercelBlobSyncService.normalizeServerURL(state.syncServerURL)
+        if !stateURL.isEmpty {
+            return stateURL
+        }
+        if let fallback = UserDefaults.standard.string(forKey: "weekly_schedule_sync_server_url_v1") {
+            let normalizedFallback = VercelBlobSyncService.normalizeServerURL(fallback)
+            if !normalizedFallback.isEmpty {
+                return normalizedFallback
+            }
+        }
+        return VercelBlobSyncService.defaultServerURL
+    }
 
     private func fetchAndMergeFromCloud(
         baseState: WidgetSharedState,
         pending: WidgetPendingCompletions
     ) async -> WidgetSharedState? {
-        let token = baseState.vercelBlobToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? VercelBlobSyncService.defaultToken
-            : baseState.vercelBlobToken
+        let serverURL = resolveSyncServerURL(from: baseState)
+        guard !serverURL.isEmpty else { return nil }
         let familyCode = baseState.familyCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? VercelBlobSyncService.defaultFamilyCode
             : baseState.familyCode
 
         do {
-            let (latest, _) = try await VercelBlobSyncService.shared.fetchLatestBlobMetadata(
-                token: token,
+            let latestResponse = try await VercelBlobSyncService.shared.fetchLatestSnapshot(
+                serverURL: serverURL,
                 familyCode: familyCode
             )
-            guard let latestBlob = latest else { return nil }
-            let remote = try await VercelBlobSyncService.shared.downloadSnapshot(
-                from: latestBlob.url,
-                token: token
-            )
+            guard let remote = latestResponse.snapshot else { return nil }
             saveCachedRemoteSnapshot(remote)
 
             let merged = Self.mergeRemoteSnapshotIntoState(
@@ -420,32 +491,27 @@ final class ScheduleWidgetDataManager: @unchecked Sendable {
         state: WidgetSharedState,
         pending: WidgetPendingCompletions
     ) async {
-        let token = state.vercelBlobToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? VercelBlobSyncService.defaultToken
-            : state.vercelBlobToken
+        let serverURL = resolveSyncServerURL(from: state)
+        guard !serverURL.isEmpty else { return }
         let familyCode = state.familyCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? VercelBlobSyncService.defaultFamilyCode
             : state.familyCode
 
         do {
-            let (latest, allBlobs) = try await VercelBlobSyncService.shared.fetchLatestBlobMetadata(
-                token: token,
+            let latestResponse = try await VercelBlobSyncService.shared.fetchLatestSnapshot(
+                serverURL: serverURL,
                 familyCode: familyCode
             )
 
             var baseSnapshot: CloudSyncSnapshot
-            if let latestBlob = latest,
-               let downloaded = try? await VercelBlobSyncService.shared.downloadSnapshot(
-                   from: latestBlob.url,
-                   token: token
-               ) {
-                baseSnapshot = downloaded
+            if let remote = latestResponse.snapshot {
+                baseSnapshot = remote
             } else if let cached = loadCachedRemoteSnapshot() {
                 baseSnapshot = cached
             } else {
                 // 원격에 이미 최신 스냅샷이 존재하지만 네트워크 오류 등으로 다운로드/캐시 로드에 실패한 경우,
-                // 스타 원장(starTransactions) 및 보상 이력(starRedemptionRequests)이 빈 배열로 덮어쓰여지는 유실을 차단하기 위해 업로드를 건너뜁니다.
-                if latest != nil {
+                // 스타 원장(starTransactions) 및 보상 이력(starRedemptionRequests)이 빈 배열로 덮어씌워지는 유실을 차단하기 위해 업로드를 건너뜁니다.
+                if latestResponse.latest != nil {
                     return
                 }
                 baseSnapshot = CloudSyncSnapshot(
@@ -490,10 +556,10 @@ final class ScheduleWidgetDataManager: @unchecked Sendable {
 
             _ = try await VercelBlobSyncService.shared.uploadSnapshot(
                 baseSnapshot,
-                token: token,
+                serverURL: serverURL,
                 familyCode: familyCode,
                 shortDeviceId: baseSnapshot.updatedByDeviceId,
-                previousBlobsToDelete: allBlobs
+                previousBlobsToDelete: latestResponse.allBlobs
             )
             saveCachedRemoteSnapshot(baseSnapshot)
         } catch {
@@ -737,13 +803,15 @@ final class ScheduleWidgetDataManager: @unchecked Sendable {
             verifiedSubFlags = bundle.parentVerifiedSubTaskFlags
         }
 
-        let token = UserDefaults.standard.string(forKey: "weekly_schedule_vercel_blob_token_v1") ?? VercelBlobSyncService.defaultToken
+        let serverURL = VercelBlobSyncService.normalizeServerURL(
+            UserDefaults.standard.string(forKey: "weekly_schedule_sync_server_url_v1") ?? VercelBlobSyncService.defaultServerURL
+        )
         let family = UserDefaults.standard.string(forKey: "weekly_schedule_family_code_v1") ?? VercelBlobSyncService.defaultFamilyCode
         let deviceId = UserDefaults.standard.string(forKey: "weekly_schedule_device_id_v1") ?? "app"
 
         return WidgetSharedState(
             updatedAt: Date().timeIntervalSince1970,
-            vercelBlobToken: token,
+            syncServerURL: serverURL,
             familyCode: family,
             deviceId: deviceId,
             deviceRoleShortTitle: "👦 아이",

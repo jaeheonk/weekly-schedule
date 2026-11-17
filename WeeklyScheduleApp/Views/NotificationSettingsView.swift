@@ -15,7 +15,7 @@ struct NotificationSettingsView: View {
 
     @State private var showingAdvancedSyncConfig: Bool = false
     @State private var draftFamilyCode: String = ""
-    @State private var draftVercelToken: String = ""
+    @State private var draftSyncServerURL: String = ""
     @State private var showingPrintSheet: Bool = false
 
     private var filteredItems: [ScheduleItem] {
@@ -125,23 +125,38 @@ struct NotificationSettingsView: View {
                         .buttonStyle(.plain)
                     }
 
-                    // Vercel Blob 실시간 동기화 상태 표시
+                    // Upstash(Vercel 프록시) 실시간 동기화 상태 표시
                     HStack(spacing: 12) {
-                        Image(systemName: store.syncErrorMessage == nil ? "icloud.and.arrow.up.fill" : "exclamationmark.icloud.fill")
+                        let statusColor: Color = store.syncErrorMessage != nil
+                            ? .red
+                            : (store.isSyncServerConfigured ? .blue : .orange)
+                        let statusIcon = store.syncErrorMessage != nil
+                            ? "exclamationmark.icloud.fill"
+                            : (store.isSyncServerConfigured ? "icloud.and.arrow.up.fill" : "link.badge.plus")
+
+                        Image(systemName: statusIcon)
                             .font(.title3)
-                            .foregroundStyle(store.syncErrorMessage == nil ? .blue : .red)
+                            .foregroundStyle(statusColor)
                             .frame(width: 38, height: 38)
-                            .background((store.syncErrorMessage == nil ? Color.blue : Color.red).opacity(0.12))
+                            .background(statusColor.opacity(0.12))
                             .clipShape(RoundedRectangle(cornerRadius: 10))
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(store.isSyncing ? "클라우드 동기화 중..." : "Vercel Blob 실시간 동기화 중")
+                            Text(
+                                store.isSyncing
+                                    ? "클라우드 동기화 중..."
+                                    : (store.isSyncServerConfigured ? "Upstash 실시간 동기화 중" : "동기화 서버 URL 설정 필요")
+                            )
                                 .font(.subheadline.weight(.bold))
                             if let err = store.syncErrorMessage {
                                 Text(err)
                                     .font(.caption2)
                                     .foregroundStyle(.red)
                                     .lineLimit(2)
+                            } else if !store.isSyncServerConfigured {
+                                Text("아래 설정에서 웹 동기화 서버 주소를 입력해 주세요")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             } else {
                                 Text("최근 동기화: \(lastSyncFormatted)")
                                     .font(.caption)
@@ -181,16 +196,21 @@ struct NotificationSettingsView: View {
                                 .background(Color(.tertiarySystemFill))
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                            Text("Vercel Blob Read/Write 토큰")
+                            Text("동기화 서버 URL (Vercel / Upstash 프록시)")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
-                            SecureField("vercel_blob_rw_...", text: $draftVercelToken)
+                            TextField("https://weekly-schedule-six-seven.vercel.app", text: $draftSyncServerURL)
                                 .font(.subheadline)
                                 .neverAutocapitalization()
+                                .urlKeyboardType()
                                 .autocorrectionDisabled()
                                 .padding(8)
                                 .background(Color(.tertiarySystemFill))
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                            Text("웹 배포 주소를 입력하면 /api/sync를 통해 Upstash 저장소와 동기화됩니다.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
 
                             HStack {
                                 Button("닫기") {
@@ -202,7 +222,7 @@ struct NotificationSettingsView: View {
                                 Spacer()
 
                                 Button("동기화 설정 저장") {
-                                    store.updateSyncSettings(token: draftVercelToken, familyCode: draftFamilyCode)
+                                    store.updateSyncSettings(serverURL: draftSyncServerURL, familyCode: draftFamilyCode)
                                     showingAdvancedSyncConfig = false
                                 }
                                 .font(.caption.weight(.bold))
@@ -214,15 +234,18 @@ struct NotificationSettingsView: View {
                     } else {
                         Button {
                             performParentAction(
-                                reason: "클라우드 동기화 토큰 및 가족 코드를 확인·변경하려면 6자리 마스터 PIN을 입력해 주세요."
+                                reason: "클라우드 동기화 서버 URL 및 가족 코드를 확인·변경하려면 6자리 마스터 PIN을 입력해 주세요."
                             ) {
                                 draftFamilyCode = store.familyCode
-                                draftVercelToken = store.vercelBlobToken
+                                draftSyncServerURL = store.syncServerURL
                                 showingAdvancedSyncConfig = true
                             }
                         } label: {
                             HStack {
-                                Label("동기화 채널 코드 (\(store.familyCode)) · 토큰 관리", systemImage: "gearshape.2.fill")
+                                Label(
+                                    "동기화 서버 · 가족 코드 (\(store.familyCode)) 설정",
+                                    systemImage: "gearshape.2.fill"
+                                )
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
                                 Spacer()

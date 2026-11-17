@@ -148,36 +148,36 @@ struct ContentView: View {
                 .zIndex(200)
             }
         }
-        .onChange(of: scenePhase) { _, newPhase in
+        .onChange(of: scenePhase, initial: true) { _, newPhase in
             if newPhase == .active {
-                store.refreshDateAndDayChange()
+                store.setForegroundSyncActive(true)
                 Task {
-                    await store.syncNow(forceUploadIfEmpty: false)
                     await notificationManager.refreshAuthorizationStatus()
                 }
             } else if newPhase == .background {
+                store.setForegroundSyncActive(false)
+                store.lockParentMode()
+                notificationManager.stopPreviewSound()
                 #if os(iOS)
-                BackgroundRefreshManager.shared.scheduleAppRefresh()
-                var bgTaskId: UIBackgroundTaskIdentifier = .invalid
-                bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "FlushPendingCloudPush") {
-                    if bgTaskId != .invalid {
-                        UIApplication.shared.endBackgroundTask(bgTaskId)
-                        bgTaskId = .invalid
+                if store.hasPendingCloudPush {
+                    var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+                    bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "FlushPendingCloudPush") {
+                        if bgTaskId != .invalid {
+                            UIApplication.shared.endBackgroundTask(bgTaskId)
+                            bgTaskId = .invalid
+                        }
+                    }
+                    Task {
+                        await store.flushPendingPush()
+                        if bgTaskId != .invalid {
+                            UIApplication.shared.endBackgroundTask(bgTaskId)
+                            bgTaskId = .invalid
+                        }
                     }
                 }
                 #endif
-                store.lockParentMode()
-                notificationManager.stopPreviewSound()
-                Task {
-                    await store.flushPendingPush()
-                    #if os(iOS)
-                    if bgTaskId != .invalid {
-                        UIApplication.shared.endBackgroundTask(bgTaskId)
-                        bgTaskId = .invalid
-                    }
-                    #endif
-                }
             } else {
+                store.setForegroundSyncActive(false)
                 store.lockParentMode()
                 notificationManager.stopPreviewSound()
             }

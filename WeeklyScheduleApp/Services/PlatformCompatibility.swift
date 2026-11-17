@@ -149,6 +149,15 @@ extension View {
         self
         #endif
     }
+
+    @ViewBuilder
+    func urlKeyboardType() -> some View {
+        #if os(iOS)
+        self.keyboardType(.URL)
+        #else
+        self
+        #endif
+    }
 }
 
 // MARK: - PDF & 인쇄 크로스 플랫폼 헬퍼
