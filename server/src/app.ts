@@ -21,6 +21,8 @@ export function createApp(options: AppOptions = {}): Express {
 
   // Root healthcheck for container monitoring and uptime pings
   app.get('/health', handleHealthCheck);
+  // Same healthcheck under /api for the single-origin Vercel deployment
+  app.get('/api/health', handleHealthCheck);
 
   // Lazy or injected storage resolver
   const getStorage = (): BlobStorage | undefined => {

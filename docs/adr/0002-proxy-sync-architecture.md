@@ -24,6 +24,8 @@ ADR-0001에서는 정적 웹 호스팅(GitHub Pages) 환경에서 브라우저�
 ### 2단계: Vercel 통합 마이그레이션 (11월 17일 이후)
 11월 17일 Vercel 쿼터 리셋 후, Express 라우트 핸들러를 Vercel Serverless Functions(`api/sync/...`)로 그대로 전환하여 단일 Vercel 프로젝트에서 Same-Origin 무중단 통합 호스팅 체제로 전환한다.
 
+> 구현: `vercel.json`, `api/`, 루트 `package.json`. 배포와 전환 절차는 `docs/vercel-deployment.md`를 따른다.
+
 ## Consequences
 - **장점**:
   - Safari/Chrome 등 모든 브라우저에서 `Load failed` CORS 에러가 완벽히 해결된다.

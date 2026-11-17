@@ -1,0 +1,10 @@
+WeeklyScheduleApp
+WeeklyScheduleApp.xcodeproj
+WeeklyScheduleAppTests
+WeeklyScheduleWidget
+DesignAssets
+tools
+.scratch
+**/node_modules
+web/dist
+server/dist

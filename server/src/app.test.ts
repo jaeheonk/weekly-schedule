@@ -29,13 +29,17 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
     process.env = originalEnv;
   });
 
-  it('GET /health and GET /api/sync/health return 200 and health status', async () => {
+  it('GET /health, GET /api/health and GET /api/sync/health return 200 and health status', async () => {
     const app = createApp();
 
     const resRoot = await request(app).get('/health');
     expect(resRoot.status).toBe(200);
     expect(resRoot.body).toHaveProperty('status', 'ok');
     expect(typeof resRoot.body.timestamp).toBe('number');
+
+    const resApi = await request(app).get('/api/health');
+    expect(resApi.status).toBe(200);
+    expect(resApi.body).toHaveProperty('status', 'ok');
 
     const resSync = await request(app).get('/api/sync/health');
     expect(resSync.status).toBe(200);

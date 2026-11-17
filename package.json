@@ -1,0 +1,9 @@
+{
+  "name": "weekly-schedule-vercel",
+  "private": true,
+  "description": "Vercel project root: web/ (static PWA) + api/ (sync functions reusing server/src).",
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  }
+}
