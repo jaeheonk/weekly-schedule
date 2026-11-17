@@ -91,20 +91,18 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
     expect(res.headers['access-control-allow-methods']).toMatch(/GET/);
   });
 
-  it('returns 500 when BLOB_READ_WRITE_TOKEN is missing on /api/sync/latest', async () => {
-    delete process.env.BLOB_READ_WRITE_TOKEN;
-    const app = createApp({ blobToken: undefined });
+  it('returns 500 when the Redis env vars are missing on /api/sync/latest', async () => {
+    const app = createApp({ env: { BLOB_READ_WRITE_TOKEN: 'ignored-unless-SYNC_STORAGE-is-blob' } });
 
     const res = await request(app).get('/api/sync/latest?familyCode=test-fam');
 
     expect(res.status).toBe(500);
     expect(res.body).toHaveProperty('error');
-    expect(res.body.error).toContain('BLOB_READ_WRITE_TOKEN');
+    expect(res.body.error).toContain('KV_REST_API_URL');
   });
 
-  it('returns 500 when BLOB_READ_WRITE_TOKEN is missing on /api/sync/upload', async () => {
-    delete process.env.BLOB_READ_WRITE_TOKEN;
-    const app = createApp({ blobToken: undefined });
+  it('returns 500 when the Redis env vars are missing on /api/sync/upload', async () => {
+    const app = createApp({ env: { BLOB_READ_WRITE_TOKEN: 'ignored-unless-SYNC_STORAGE-is-blob' } });
 
     const res = await request(app)
       .post('/api/sync/upload')
@@ -112,7 +110,7 @@ describe('Server Seam 1: Healthcheck & CORS', () => {
 
     expect(res.status).toBe(500);
     expect(res.body).toHaveProperty('error');
-    expect(res.body.error).toContain('BLOB_READ_WRITE_TOKEN');
+    expect(res.body.error).toContain('KV_REST_API_URL');
   });
 
   describe('GET /api/sync/latest', () => {

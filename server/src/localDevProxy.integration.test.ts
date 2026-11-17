@@ -311,6 +311,11 @@ describe('local Vite proxy', () => {
           PORT: String(proxyPort),
           VITE_DEV_PORT: String(vitePort),
           BLOB_READ_WRITE_TOKEN: '',
+          SYNC_STORAGE: '',
+          KV_REST_API_URL: '',
+          KV_REST_API_TOKEN: '',
+          UPSTASH_REDIS_REST_URL: '',
+          UPSTASH_REDIS_REST_TOKEN: '',
           BROWSER: 'none',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -331,7 +336,7 @@ describe('local Vite proxy', () => {
       );
       const latestText = await latestRes.text();
       expect(latestRes.status, latestText.slice(0, 180)).toBe(500);
-      expect(latestText).toContain('BLOB_READ_WRITE_TOKEN');
+      expect(latestText).toContain('KV_REST_API_URL');
       expect(latestText).not.toContain('<!doctype html');
     },
     40_000
